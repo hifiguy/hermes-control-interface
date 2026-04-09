@@ -81,6 +81,7 @@ const els = {
   saveBtn: $('#save-file-btn'),
   explorerFullscreenBtn: $('#explorer-fullscreen-btn'),
   sidebarAgentSprite: $('#sidebar-agent-sprite'),
+  sidebarAvatarImg: $('#sidebar-avatar-img'),
   sidebarAgentState: $('#sidebar-agent-state'),
   sidebarAgentDetails: $('#sidebar-agent-details'),
   systemPanel: $('#system-panel'),
@@ -468,26 +469,21 @@ function renderSidebarAgent(snapshot) {
 
   const avatarUrl = snapshot.avatar?.url || '';
   const hasCustomAvatar = snapshot.avatar?.custom;
-  const avatarKey = `${avatarUrl}|${hasCustomAvatar}`;
 
-  // Load avatar image if changed
-  if (avatarUrl && avatarKey !== state._lastSidebarAvatarKey) {
-    state._lastSidebarAvatarKey = avatarKey;
-    const cacheBustedUrl = hasCustomAvatar ? `${avatarUrl}?t=${Date.now()}` : avatarUrl;
-    const img = new Image();
-    img.onload = () => {
-      state._sidebarAvatarImg = img;
-      state._sidebarAvatarReady = true;
-      drawSidebarSprite(agentState, 0);
-    };
-    img.onerror = () => {
-      state._sidebarAvatarImg = null;
-      state._sidebarAvatarReady = false;
-      drawSidebarSprite(agentState, 0);
-    };
-    img.src = cacheBustedUrl;
+  if (hasCustomAvatar && avatarUrl) {
+    // Custom avatar: show <img> (supports animated GIF), hide canvas
+    const cacheBustedUrl = `${avatarUrl}?t=${Date.now()}`;
+    if (els.sidebarAvatarImg.src !== cacheBustedUrl) {
+      els.sidebarAvatarImg.src = cacheBustedUrl;
+    }
+    els.sidebarAvatarImg.style.display = '';
+    els.sidebarAgentSprite.style.display = 'none';
+  } else {
+    // Default: show pixel sprite canvas, hide img
+    els.sidebarAvatarImg.style.display = 'none';
+    els.sidebarAgentSprite.style.display = '';
+    drawSidebarSprite(agentState, 0);
   }
-  drawSidebarSprite(agentState, 0);
 }
 
 const SIDEBAR_COLORS = {
@@ -510,7 +506,7 @@ function drawSidebarSprite(stateName, frameIdx) {
   ctx.fillStyle = 'transparent';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // Draw pixel sprite
+  // Draw pixel sprite (only shown when no custom avatar)
   for (let row = 0; row < frame.length; row++) {
     const line = frame[row] || '';
     for (let col = 0; col < line.length; col++) {
@@ -520,13 +516,6 @@ function drawSidebarSprite(stateName, frameIdx) {
       ctx.fillStyle = color;
       ctx.fillRect(col * scale, row * scale, scale, scale);
     }
-  }
-
-  // Overlay custom avatar
-  if (state._sidebarAvatarReady && state._sidebarAvatarImg) {
-    const img = state._sidebarAvatarImg;
-    ctx.imageSmoothingEnabled = true;
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
   }
 }
 
@@ -1165,6 +1154,13 @@ function connectWs() {
         state.lastTerminalBufferLength = String(data.buffer || '').length || state.lastTerminalBufferLength;
         state.lastTerminalActivity = Date.now();
       }
+      if (data.type === 'system-metrics') {
+        // Update only system panel — lightweight, no full re-render
+        if (state.snapshot) {
+          state.snapshot.system = data.payload;
+          renderSystem(state.snapshot);
+        }
+      }
     } catch {}
   });
   socket.addEventListener('close', () => {
@@ -1492,9 +1488,9 @@ function bindUi() {
   els.saveBtn.addEventListener('click', saveCurrentFile);
   els.avatarUploadBtn?.addEventListener('click', () => els.avatarFileInput?.click());
   els.avatarResetBtn?.addEventListener('click', async () => {
-    state._lastSidebarAvatarKey = null;
-    state._sidebarAvatarImg = null;
-    state._sidebarAvatarReady = false;
+    els.sidebarAvatarImg.src = '';
+    els.sidebarAvatarImg.style.display = 'none';
+    els.sidebarAgentSprite.style.display = '';
     await postJson('/api/avatar', {}, 'DELETE');
     showToast('Avatar reset', 'info');
     // Don't call fetchSnapshot() — server broadcasts on avatar change
@@ -1550,26 +1546,13 @@ function startAutoRefresh() {
   if (!state.autoRefreshEnabled) return;
   state.autoRefreshTimer = setInterval(() => {
     fetchSnapshot();
-  }, 1000);
-  // Avatar animation loop
-  if (!state.spriteLoopTimer) {
-    state.spriteLoopTimer = setInterval(() => {
-      if (!state.snapshot) return;
-      const elapsed = Date.now() - state.lastTerminalActivity;
-      const agentState = elapsed < 3000 ? 'thinking' : 'idle';
-      drawSidebarSprite(agentState, state.spriteTick++);
-    }, 500);
-  }
+  }, 10000);
 }
 
 function stopAutoRefresh() {
   if (state.autoRefreshTimer) {
     clearInterval(state.autoRefreshTimer);
     state.autoRefreshTimer = null;
-  }
-  if (state.spriteLoopTimer) {
-    clearInterval(state.spriteLoopTimer);
-    state.spriteLoopTimer = null;
   }
 }
 

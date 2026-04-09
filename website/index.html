@@ -51,7 +51,10 @@
     <aside id="sidebar">
   <section class="side-section sidebar-agent-section">
     <div id="sidebar-agent-stage" class="sidebar-agent-stage">
-      <canvas id="sidebar-agent-sprite" class="sidebar-agent-sprite" width="108" height="108"></canvas>
+      <div id="sidebar-avatar-wrap" style="position:relative;width:108px;height:108px;">
+        <canvas id="sidebar-agent-sprite" class="sidebar-agent-sprite" width="108" height="108"></canvas>
+        <img id="sidebar-avatar-img" style="position:absolute;top:0;left:0;width:100%;height:100%;border-radius:4px;object-fit:cover;display:none;" alt="avatar" />
+      </div>
       <div class="sidebar-agent-shadow"></div>
     </div>
     <div class="sidebar-agent-info">

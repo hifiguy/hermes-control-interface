@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const helmet = require('helmet');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -58,6 +59,22 @@ if (!CONTROL_PASSWORD || !CONTROL_SECRET) {
 }
 
 const app = express();
+
+// Security headers — safe config (no HSTS, CSP allows Google Fonts)
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+      fontSrc: ["'self'", "https://fonts.gstatic.com"],
+      imgSrc: ["'self'", "data:", "blob:"],
+      connectSrc: ["'self'", "ws:", "wss:"],
+    },
+  },
+  hsts: false,
+}));
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'website')));
 app.use('/vendor/xterm', express.static(path.join(__dirname, 'node_modules/xterm')));
@@ -1252,3 +1269,11 @@ wss.on('connection', (socket, req) => {
 // No periodic broadcast — clients get updates via WS events and targeted API calls.
 
 log('system.started', 'Hermes Control Interface booted');
+
+// Lightweight system metrics broadcast every 3 seconds (no hermes commands)
+setInterval(() => {
+  broadcastToClients({
+    type: 'system-metrics',
+    payload: getSystem(),
+  });
+}, 3000);
