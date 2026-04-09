@@ -659,15 +659,18 @@ function renderTokens(snapshot) {
   const u = snapshot.usage || {};
   const recentKinds = u.recentKinds || {};
   const kindLine = Object.entries(recentKinds).slice(0, 4).map(([kind, count]) => `${kind}:${count}`).join(' • ') || 'none';
+  const period = t.period || u.period || '';
+  const fmtN = (n) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n / 1_000).toFixed(1)}K` : String(n);
   els.tokensPanel.innerHTML = `<div class="metric-list">
-    <div class="metric-row"><div class="left"><div class="title">Total tokens</div><div class="sub">estimated from live sessions</div></div><div class="value">${t.totalTokens ?? 0}</div></div>
-    <div class="metric-row"><div class="left"><div class="title">Prompt / completion</div><div class="sub">current mix</div></div><div class="value">${t.promptTokens ?? 0} / ${t.completionTokens ?? 0}</div></div>
-    <div class="metric-row"><div class="left"><div class="title">Sessions / messages</div><div class="sub">active dashboard state</div></div><div class="value">${u.sessionCount ?? 0} / ${u.messageCount ?? 0}</div></div>
-    <div class="metric-row"><div class="left"><div class="title">Events / cron / roots</div><div class="sub">usage snapshot</div></div><div class="value">${u.eventCount ?? 0} / ${u.cronCount ?? 0} / ${u.rootCount ?? 0}</div></div>
+    <div class="metric-row"><div class="left"><div class="title">Total tokens</div><div class="sub">${escapeHtml(period || 'last 7 days')}</div></div><div class="value">${fmtN(t.totalTokens ?? 0)}</div></div>
+    <div class="metric-row"><div class="left"><div class="title">Input / output</div><div class="sub">prompt vs completion</div></div><div class="value">${fmtN(t.inputTokens ?? 0)} / ${fmtN(t.outputTokens ?? 0)}</div></div>
+    <div class="metric-row"><div class="left"><div class="title">Cache read / write</div><div class="sub">prompt caching</div></div><div class="value">${fmtN(t.cacheRead ?? 0)} / ${fmtN(t.cacheWrite ?? 0)}</div></div>
+    <div class="metric-row"><div class="left"><div class="title">Sessions / messages</div><div class="sub">from hermes insights</div></div><div class="value">${fmtN(t.sessions ?? u.sessionCount ?? 0)} / ${fmtN(t.messages ?? u.messageCount ?? 0)}</div></div>
+    <div class="metric-row"><div class="left"><div class="title">Tool calls / user msgs</div><div class="sub">activity</div></div><div class="value">${fmtN(t.toolCalls ?? 0)} / ${fmtN(t.userMessages ?? 0)}</div></div>
     <div class="metric-row full-span"><div class="left"><div class="title">Recent activity</div><div class="sub">${escapeHtml(kindLine)}</div></div><div class="value">${escapeHtml(u.lastEvent?.kind || 'none')}</div></div>
-    ${(t.modelBreakdown || []).map((m) => `<div class="metric-row"><div class="left"><div class="title">${escapeHtml(m.model)}</div><div class="sub">model bucket</div></div><div class="value">${m.tokens}</div></div>`).join('')}
+    ${(t.modelBreakdown || []).map((m) => `<div class="metric-row"><div class="left"><div class="title">${escapeHtml(m.model)}</div><div class="sub">${m.sessions || ''} sessions</div></div><div class="value">${fmtN(m.tokens)}</div></div>`).join('')}
   </div>`;
-  els.tokenProvider.textContent = u.generatedAt ? 'usage' : 'router';
+  els.tokenProvider.textContent = period ? 'insights' : 'local';
 }
 
 function renderBackground() {
@@ -1570,10 +1573,6 @@ function startClock() {
 function startSpriteLoop() {
   setInterval(() => {
     if (!state.snapshot) return;
-    // Only animate the pixel sprite — skip redraw when custom avatar is loaded and ready
-    // (the cached avatar image is drawn on top each time drawSidebarSprite runs,
-    //  but we don't need to repaint the canvas 2x/sec when there's a static custom avatar)
-    if (state._sidebarAvatarReady) return;
     const a = state.snapshot.agent || {};
     const normalized = normalizeAgentState(a.state, a.details);
     drawSidebarSprite(normalized, state.spriteTick++ % 2);

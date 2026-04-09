@@ -677,41 +677,117 @@ function getSystem() {
   };
 }
 
-function getTokens() {
-  const total = Array.from(sessions.values()).reduce(
-    (sum, messages) => sum + messages.reduce((m, msg) => m + Math.max(1, Math.round((msg.content || '').length / 4)), 0),
-    0,
-  );
+function parseHermesInsights(raw) {
+  const text = String(raw || '');
+  const grab = (label) => {
+    const m = text.match(new RegExp(label + ':\\s+([\\d,]+)'));
+    return m ? parseInt(m[1].replace(/,/g, ''), 10) : 0;
+  };
+  // Parse overview stats
+  const sessions = grab('Sessions');
+  const messages = grab('Messages');
+  const toolCalls = grab('Tool calls');
+  const userMessages = grab('User messages');
+  const inputTokens = grab('Input tokens');
+  const outputTokens = grab('Output tokens');
+  const cacheRead = grab('Cache read');
+  const cacheWrite = grab('Cache write');
+  const totalTokens = grab('Total tokens');
+
+  // Parse model breakdown
+  const modelBreakdown = [];
+  const modelRegex = /^[\w.-]+\s+\d+\s+([\d,]+)/gm;
+  const modelLines = text.split('\n').filter(l => /^\s+[\w.-]+\s+\d+\s+[\d,]+/.test(l));
+  for (const line of modelLines) {
+    const parts = line.trim().split(/\s{2,}/);
+    if (parts.length >= 3) {
+      modelBreakdown.push({
+        model: parts[0].trim(),
+        sessions: parseInt(parts[1].replace(/,/g, ''), 10) || 0,
+        tokens: parseInt(parts[2].replace(/,/g, ''), 10) || 0,
+      });
+    }
+  }
+
+  // Parse period
+  const periodMatch = text.match(/Period:\s+(.+)/);
+  const period = periodMatch ? periodMatch[1].trim() : '';
+
   return {
-    totalTokens: total + Math.round(process.uptime() * 2),
-    promptTokens: Math.round(total * 0.6),
-    completionTokens: Math.round(total * 0.4),
-    modelBreakdown: [
-      { model: 'gpt-5.4-mini', tokens: Math.round(total * 0.45) },
-      { model: 'minimax-m2.7', tokens: Math.round(total * 0.18) },
-      { model: 'gpt-5.3-codex', tokens: Math.round(total * 0.1) },
-      { model: 'other', tokens: Math.max(0, total - Math.round(total * 0.73)) },
-    ],
+    sessions, messages, toolCalls, userMessages,
+    inputTokens, outputTokens, cacheRead, cacheWrite, totalTokens,
+    modelBreakdown, period,
+    raw: text,
+  };
+}
+
+function getInsights() {
+  const now = Date.now();
+  if (getInsights.cache && now - getInsights.cache.at < 300_000) return getInsights.cache.data;
+  try {
+    const raw = execFileSync('bash', ['-lc', 'timeout 15s hermes insights --days 7 2>&1'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      maxBuffer: 64 * 1024,
+    });
+    const data = parseHermesInsights(raw);
+    getInsights.cache = { at: now, data };
+    return data;
+  } catch (error) {
+    log('insights.error', error.message || 'failed to run hermes insights');
+    if (getInsights.cache?.data) return getInsights.cache.data;
+  }
+  return {
+    sessions: 0, messages: 0, toolCalls: 0, userMessages: 0,
+    inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+    modelBreakdown: [], period: 'unavailable',
+  };
+}
+getInsights.cache = { at: 0, data: null };
+
+function getTokens() {
+  const insights = getInsights();
+  return {
+    totalTokens: insights.totalTokens,
+    inputTokens: insights.inputTokens,
+    outputTokens: insights.outputTokens,
+    cacheRead: insights.cacheRead,
+    cacheWrite: insights.cacheWrite,
+    promptTokens: insights.inputTokens,
+    completionTokens: insights.outputTokens,
+    sessions: insights.sessions,
+    messages: insights.messages,
+    toolCalls: insights.toolCalls,
+    period: insights.period,
+    modelBreakdown: insights.modelBreakdown.map(m => ({ model: m.model, tokens: m.tokens })),
   };
 }
 
 
 function buildUsageSummary() {
-  const tokenUsage = getTokens();
-  const messageCount = Array.from(sessions.values()).reduce((sum, messages) => sum + messages.length, 0);
+  const insights = getInsights();
   const recentKinds = events.slice(-50).reduce((acc, event) => {
     acc[event.kind] = (acc[event.kind] || 0) + 1;
     return acc;
   }, {});
   return {
     generatedAt: new Date().toISOString(),
-    sessionCount: sessions.size,
-    messageCount,
+    sessionCount: insights.sessions,
+    messageCount: insights.messages,
+    toolCalls: insights.toolCalls,
+    userMessages: insights.userMessages,
+    inputTokens: insights.inputTokens,
+    outputTokens: insights.outputTokens,
+    cacheRead: insights.cacheRead,
+    cacheWrite: insights.cacheWrite,
+    totalTokens: insights.totalTokens,
+    period: insights.period,
+    modelBreakdown: insights.modelBreakdown,
     eventCount: events.length,
     cronCount: cronJobs.length,
     rootCount: ROOTS.length,
     recentKinds,
-    tokenUsage,
+    tokenUsage: getTokens(),
     lastEvent: events.at(-1) || null,
   };
 }
