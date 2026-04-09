@@ -30,6 +30,7 @@ const state = {
   autoRefreshTimer: null,
   autoRefreshEnabled: true,
   lastTerminalActivity: 0,
+  csrfToken: '',
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -353,9 +354,11 @@ function bootTerminal() {
       if (state.socket?.readyState === WebSocket.OPEN) {
         state.socket.send(JSON.stringify({ type: 'terminal-input', data }));
       } else {
+        const h = { 'Content-Type': 'application/json' };
+        if (state.csrfToken) h['X-CSRF-Token'] = state.csrfToken;
         fetch('/api/terminal/exec', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: h,
           body: JSON.stringify({ command: data }),
         }).catch(() => {});
       }
@@ -1014,9 +1017,11 @@ async function openFile(filePath) {
 async function saveCurrentFile() {
   if (!state.currentFile) return;
   try {
+    const h = { 'Content-Type': 'application/json' };
+    if (state.csrfToken) h['X-CSRF-Token'] = state.csrfToken;
     const res = await fetch('/api/file', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: h,
       body: JSON.stringify({ path: state.currentFile, content: els.editor.value }),
     });
     const data = await res.json();
@@ -1181,9 +1186,11 @@ function normalizeQuotedText(text) {
 }
 
 async function postJson(url, body, method = 'POST') {
+  const headers = { 'Content-Type': 'application/json' };
+  if (state.csrfToken) headers['X-CSRF-Token'] = state.csrfToken;
   const res = await fetch(url, {
     method,
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(body || {}),
   });
   const data = await res.json().catch(() => ({}));
@@ -1316,9 +1323,11 @@ async function runTerminalCommand(command) {
       state.socket.send(JSON.stringify({ type: 'terminal-input', data: `${trimmed}\r` }));
       return;
     }
+    const h = { 'Content-Type': 'application/json' };
+    if (state.csrfToken) h['X-CSRF-Token'] = state.csrfToken;
     const res = await fetch('/api/terminal/exec', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: h,
       body: JSON.stringify({ command: trimmed }),
     });
     const data = await res.json();
@@ -1466,7 +1475,8 @@ function bindUi() {
     ev.preventDefault();
     els.loginError.textContent = '';
     try {
-      await login(els.passwordInput.value.trim());
+      const result = await login(els.passwordInput.value.trim());
+      state.csrfToken = result.csrfToken || '';
       els.passwordInput.value = '';
       setLocked(false);
       connectWs();
@@ -1580,6 +1590,7 @@ async function boot() {
 
   const session = await fetchSession();
   if (session.authenticated) {
+    state.csrfToken = session.csrfToken || '';
     setLocked(false);
     connectWs();
     await loadLayoutState();

@@ -65,7 +65,7 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'"],
+      scriptSrc: ["'self'", "'sha256-x0qS2TZv9XGjDs5X2fiLzoolq41ckXzs8zaPKfo4Izg='"],
       styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       fontSrc: ["'self'", "https://fonts.gstatic.com"],
       imgSrc: ["'self'", "data:", "blob:"],
@@ -180,6 +180,20 @@ function createAuthToken() {
   return `${ts}.${hmac(ts)}`;
 }
 
+function deriveCsrfToken(authToken) {
+  return hmac('csrf:' + authToken);
+}
+
+function verifyCsrfToken(req) {
+  const headerToken = req.headers['x-csrf-token'];
+  if (!headerToken) return false;
+  const cookies = parseCookies(req);
+  const authToken = cookies[AUTH_COOKIE];
+  if (!authToken) return false;
+  const expected = deriveCsrfToken(authToken);
+  return safeTimingEqual(headerToken, expected);
+}
+
 function safeTimingEqual(a, b) {
   const ab = Buffer.from(String(a));
   const bb = Buffer.from(String(b));
@@ -217,9 +231,16 @@ function requireAuth(req, res, next) {
   return res.status(401).json({ error: 'authentication required' });
 }
 
+function requireCsrf(req, res, next) {
+  if (!isAuthed(req)) return res.status(401).json({ error: 'authentication required' });
+  if (verifyCsrfToken(req)) return next();
+  return res.status(403).json({ error: 'invalid CSRF token' });
+}
+
 function setAuthCookie(res) {
   const token = createAuthToken();
   res.setHeader('Set-Cookie', `${AUTH_COOKIE}=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${24 * 60 * 60}; Secure`);
+  return token;
 }
 
 function clearAuthCookie(res) {
@@ -925,7 +946,13 @@ function offlineReply(message) {
 }
 
 app.get('/api/session', (req, res) => {
-  res.json({ authenticated: isAuthed(req), passwordRequired: true, identity: 'root@hermes' });
+  const authed = isAuthed(req);
+  const response = { authenticated: authed, passwordRequired: true, identity: 'root@hermes' };
+  if (authed) {
+    const cookies = parseCookies(req);
+    response.csrfToken = deriveCsrfToken(cookies[AUTH_COOKIE]);
+  }
+  res.json(response);
 });
 
 app.post('/api/login', loginRateLimiter, (req, res) => {
@@ -935,9 +962,10 @@ app.post('/api/login', loginRateLimiter, (req, res) => {
     log('auth.failed', `bad password from ip ${ip}`);
     return res.status(401).json({ ok: false, error: 'bad password' });
   }
-  setAuthCookie(res);
+  const authToken = setAuthCookie(res);
+  const csrfToken = deriveCsrfToken(authToken);
   log('auth.login', 'dashboard unlocked');
-  return res.json({ ok: true });
+  return res.json({ ok: true, csrfToken });
 });
 
 app.post('/api/logout', (req, res) => {
@@ -985,7 +1013,7 @@ app.get('/api/file', requireAuth, (req, res) => {
   }
 });
 
-app.post('/api/file', requireAuth, (req, res) => {
+app.post('/api/file', requireCsrf, (req, res) => {
   const { path: filePath, content } = req.body || {};
   if (!filePath) return res.status(400).json({ error: 'path required' });
   try {
@@ -997,7 +1025,7 @@ app.post('/api/file', requireAuth, (req, res) => {
   }
 });
 
-app.post('/api/terminal/exec', requireAuth, (req, res) => {
+app.post('/api/terminal/exec', requireCsrf, (req, res) => {
   const command = String(req.body?.command || '').trim();
   if (!command) return res.status(400).json({ error: 'command required' });
   log('terminal.input', command.slice(0, 120));
@@ -1034,7 +1062,7 @@ app.post('/api/terminal/exec', requireAuth, (req, res) => {
   }
 });
 
-app.post('/api/chat', requireAuth, async (req, res) => {
+app.post('/api/chat', requireCsrf, async (req, res) => {
   const { message, sessionId = 'control-ui' } = req.body || {};
   if (!message || typeof message !== 'string') return res.status(400).json({ error: 'message required' });
   const history = sessions.get(sessionId) || [];
@@ -1084,7 +1112,7 @@ function addCronJob({ schedule, note, source = '/cron add' }) {
   return job;
 }
 
-app.post('/api/cron/:action', requireAuth, (req, res) => {
+app.post('/api/cron/:action', requireCsrf, (req, res) => {
   try {
     const result = handleCronAction(req.params.action, req.body || {}, req.query || {}, '/api/cron');
     return res.json(result);
@@ -1117,7 +1145,7 @@ app.get('/api/layout', requireAuth, (req, res) => {
   res.json({ ok: true, layout: readLayoutStore() });
 });
 
-app.post('/api/layout', requireAuth, (req, res) => {
+app.post('/api/layout', requireCsrf, (req, res) => {
   try {
     const panels = Array.isArray(req.body?.panels) ? req.body.panels : [];
     const normalized = panels
@@ -1142,7 +1170,7 @@ app.get('/api/avatar', requireAuth, (req, res) => {
 });
 
 // Debug: force agent sprite state for testing
-app.post('/api/agent/state', requireAuth, (req, res) => {
+app.post('/api/agent/state', requireCsrf, (req, res) => {
   const target = String(req.body?.state || '').toLowerCase();
   const valid = ['idle', 'thinking', 'coding', 'executing', 'error'];
   if (!valid.includes(target)) return res.status(400).json({ error: `valid states: ${valid.join(', ')}` });
@@ -1157,7 +1185,7 @@ app.post('/api/agent/state', requireAuth, (req, res) => {
   return res.json({ ok: true, state: target });
 });
 
-app.post('/api/avatar', requireAuth, (req, res) => {
+app.post('/api/avatar', requireCsrf, (req, res) => {
   const dataUrl = String(req.body?.dataUrl || '').trim();
   if (!dataUrl) return res.status(400).json({ error: 'no data' });
   // Accept any image/* data URL with base64 encoding
@@ -1175,7 +1203,7 @@ app.post('/api/avatar', requireAuth, (req, res) => {
   return res.json({ ok: true, url: '/api/avatar/image', custom: true });
 });
 
-app.delete('/api/avatar', requireAuth, (req, res) => {
+app.delete('/api/avatar', requireCsrf, (req, res) => {
   clearAvatarOverride();
   log('avatar.reset', 'avatar reverted to default photo');
   broadcast();
