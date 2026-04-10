@@ -634,6 +634,9 @@ function renderCron(snapshot) {
   `).join('')}</div>`;
 }
 
+let insightsFilter = { days: 7, source: '' };
+let insightsCache = {};
+
 function renderTokens(snapshot) {
   const t = snapshot.tokens || {};
   const u = snapshot.usage || {};
@@ -641,16 +644,58 @@ function renderTokens(snapshot) {
   const kindLine = Object.entries(recentKinds).slice(0, 4).map(([kind, count]) => `${kind}:${count}`).join(' • ') || 'none';
   const period = t.period || u.period || '';
   const fmtN = (n) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n / 1_000).toFixed(1)}K` : String(n);
+  const activeDays = insightsFilter.days;
+  const activeSource = insightsFilter.source || 'all';
+  const sources = ['all', 'cli', 'telegram', 'whatsapp', 'discord', 'cron'];
+
   els.tokensPanel.innerHTML = `<div class="metric-list">
-    <div class="metric-row"><div class="left"><div class="title">Total tokens</div><div class="sub">${escapeHtml(period || 'last 7 days')}</div></div><div class="value">${fmtN(t.totalTokens ?? 0)}</div></div>
+    <div class="metric-row full-span" style="padding:6px 0;">
+      <div class="insights-filters" style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;">
+        ${[1, 7, 30].map(d => `<button class="ghost-btn filter-btn ${activeDays === d ? 'active' : ''}" data-days="${d}" data-source="${activeSource}" style="font-size:10px;padding:3px 8px;min-height:auto;">${d === 1 ? 'Today' : d + 'd'}</button>`).join('')}
+        <select class="insights-source" style="margin-left:auto;background:rgba(0,0,0,0.3);color:#ede6d4;border:1px solid rgba(244,199,92,0.3);border-radius:4px;padding:2px 6px;font-size:10px;font-family:'JetBrains Mono',monospace;">
+          ${sources.map(s => `<option value="${s}" ${activeSource === s ? 'selected' : ''}>${s}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="metric-row"><div class="left"><div class="title">Total tokens</div><div class="sub">${escapeHtml(period || activeDays + ' days')}</div></div><div class="value">${fmtN(t.totalTokens ?? 0)}</div></div>
     <div class="metric-row"><div class="left"><div class="title">Input / output</div><div class="sub">prompt vs completion</div></div><div class="value">${fmtN(t.inputTokens ?? 0)} / ${fmtN(t.outputTokens ?? 0)}</div></div>
     <div class="metric-row"><div class="left"><div class="title">Cache read / write</div><div class="sub">prompt caching</div></div><div class="value">${fmtN(t.cacheRead ?? 0)} / ${fmtN(t.cacheWrite ?? 0)}</div></div>
     <div class="metric-row"><div class="left"><div class="title">Sessions / messages</div><div class="sub">from hermes insights</div></div><div class="value">${fmtN(t.sessions ?? u.sessionCount ?? 0)} / ${fmtN(t.messages ?? u.messageCount ?? 0)}</div></div>
     <div class="metric-row"><div class="left"><div class="title">Tool calls / user msgs</div><div class="sub">activity</div></div><div class="value">${fmtN(t.toolCalls ?? 0)} / ${fmtN(t.userMessages ?? 0)}</div></div>
-    <div class="metric-row full-span"><div class="left"><div class="title">Recent activity</div><div class="sub">${escapeHtml(kindLine)}</div></div><div class="value">${escapeHtml(u.lastEvent?.kind || 'none')}</div></div>
     ${(t.modelBreakdown || []).map((m) => `<div class="metric-row"><div class="left"><div class="title">${escapeHtml(m.model)}</div><div class="sub">${m.sessions || ''} sessions</div></div><div class="value">${fmtN(m.tokens)}</div></div>`).join('')}
   </div>`;
   els.tokenProvider.textContent = period ? 'insights' : 'local';
+
+  // Bind filter events
+  els.tokensPanel.querySelectorAll('.filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => filterInsights(parseInt(btn.dataset.days), insightsFilter.source));
+  });
+  const sourceSelect = els.tokensPanel.querySelector('.insights-source');
+  if (sourceSelect) {
+    sourceSelect.addEventListener('change', () => filterInsights(insightsFilter.days, sourceSelect.value));
+  }
+}
+
+async function filterInsights(days, source) {
+  insightsFilter = { days, source: source === 'all' ? '' : source };
+  const cacheKey = `${days}|${insightsFilter.source}`;
+  if (insightsCache[cacheKey] && Date.now() - insightsCache[cacheKey].at < 60000) {
+    renderTokens({ tokens: insightsCache[cacheKey].data, usage: state.snapshot?.usage || {} });
+    return;
+  }
+  // Show loading
+  els.tokensPanel.innerHTML = '<div class="small-meta" style="padding:12px;text-align:center;">Loading insights…</div>';
+  try {
+    const params = `days=${days}${insightsFilter.source ? '&source=' + insightsFilter.source : ''}`;
+    const res = await fetch(`/api/insights?${params}`);
+    const data = await res.json();
+    if (data.ok) {
+      insightsCache[cacheKey] = { at: Date.now(), data };
+      renderTokens({ tokens: data, usage: state.snapshot?.usage || {} });
+    }
+  } catch {
+    els.tokensPanel.innerHTML = '<div class="small-meta" style="padding:12px;text-align:center;color:#ff7171;">Failed to load insights</div>';
+  }
 }
 
 function markdownToHtml(md) {

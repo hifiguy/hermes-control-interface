@@ -764,23 +764,28 @@ function parseHermesInsights(raw) {
   };
 }
 
-async function getInsights() {
+async function getInsights(days = 7, source = '') {
+  const cacheKey = `${days}|${source}`;
   const now = Date.now();
-  if (getInsights.cache && now - getInsights.cache.at < 300_000) return getInsights.cache.data;
-  const raw = await shell('hermes insights --days 7', '15s');
+  if (getInsights.cache[cacheKey] && now - getInsights.cache[cacheKey].at < 300_000) {
+    return getInsights.cache[cacheKey].data;
+  }
+  let cmd = `hermes insights --days ${days}`;
+  if (source) cmd += ` --source ${source}`;
+  const raw = await shell(cmd, '15s');
   if (raw) {
     const data = parseHermesInsights(raw);
-    getInsights.cache = { at: now, data };
+    getInsights.cache[cacheKey] = { at: now, data };
     return data;
   }
-  if (getInsights.cache?.data) return getInsights.cache.data;
+  if (getInsights.cache[cacheKey]?.data) return getInsights.cache[cacheKey].data;
   return {
     sessions: 0, messages: 0, toolCalls: 0, userMessages: 0,
     inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
     modelBreakdown: [], period: 'unavailable',
   };
 }
-getInsights.cache = { at: 0, data: null };
+getInsights.cache = {};
 
 function getTokens(insights) {
   const data = insights || { totalTokens: 0, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheWrite: 0, sessions: 0, messages: 0, toolCalls: 0, period: '', modelBreakdown: [] };
@@ -1146,6 +1151,13 @@ app.get('/usage', requireAuth, (req, res) => {
 
 app.get('/api/usage', requireAuth, (req, res) => {
   res.json(buildUsageSummary());
+});
+
+app.get('/api/insights', requireAuth, async (req, res) => {
+  const days = Math.min(365, Math.max(1, parseInt(req.query.days) || 7));
+  const source = String(req.query.source || '').trim();
+  const data = await getInsights(days, source);
+  res.json({ ok: true, ...data, filter: { days, source: source || 'all' } });
 });
 
 app.get('/api/layout', requireAuth, (req, res) => {
