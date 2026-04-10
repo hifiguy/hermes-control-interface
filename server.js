@@ -84,11 +84,7 @@ app.use('/vendor/xterm-addon-fit', express.static(path.join(__dirname, 'node_mod
 const sessions = new Map();
 const events = [];
 let hermesSidebarSessionsCache = { at: 0, data: [] };
-const cronJobs = [
-  { name: 'daily-memory-distill', status: 'ACTIVE', nextRun: Date.now() + 1000 * 60 * 60, lastRun: Date.now() - 1000 * 60 * 60 * 24 },
-  { name: 'weekly-maintenance', status: 'ACTIVE', nextRun: Date.now() + 1000 * 60 * 60 * 24 * 2, lastRun: Date.now() - 1000 * 60 * 60 * 24 * 6 },
-  { name: 'trend-watch', status: 'PAUSED', nextRun: Date.now() + 1000 * 60 * 15, lastRun: Date.now() - 1000 * 60 * 30 },
-];
+const cronJobs = [];
 const quickActions = [
   { cmd: 'hermes status', desc: 'Show Hermes health and session status' },
   { cmd: 'hermes skills', desc: 'Inspect installed skills' },
@@ -939,14 +935,6 @@ function buildDashboardState(authed = false) {
   };
 }
 
-function offlineReply(message) {
-  const lower = String(message || '').toLowerCase();
-  if (lower.includes('status')) return 'status ok\nterminal alive\nhermes ready';
-  if (lower.includes('skills')) return 'skills listed\nknowledge panel synced';
-  if (lower.includes('model')) return 'model info live\ncheck the top bar';
-  return 'command recv\nno api key needed for local dashboard mode';
-}
-
 app.get('/api/session', (req, res) => {
   const authed = isAuthed(req);
   const response = { authenticated: authed, passwordRequired: true, identity: 'root@hermes' };
@@ -979,7 +967,7 @@ app.post('/api/login', loginRateLimiter, (req, res) => {
   return res.json({ ok: true, csrfToken });
 });
 
-app.post('/api/logout', (req, res) => {
+app.post('/api/logout', requireCsrf, (req, res) => {
   clearAuthCookie(res);
   log('auth.logout', 'dashboard locked');
   res.json({ ok: true });
@@ -1079,7 +1067,7 @@ app.post('/api/chat', requireCsrf, async (req, res) => {
   const history = sessions.get(sessionId) || [];
   log('task.started', message.slice(0, 90));
   try {
-    const response = process.env.LLM_API_KEY ? await offlineReply(message) : offlineReply(message);
+    const response = 'chat endpoint active — use the terminal for AI responses';
     const nextHistory = [...history, { role: 'user', content: message }, { role: 'assistant', content: response }].slice(-30);
     sessions.set(sessionId, nextHistory);
     log('task.completed', `chat: ${sessionId}`);
@@ -1134,7 +1122,7 @@ app.post('/api/cron/:action', requireCsrf, (req, res) => {
 
 app.post('/internal/cron/:action', (req, res) => {
   const secret = String(req.get('x-hermes-control-secret') || '');
-  if (!secret || secret !== CONTROL_SECRET) return res.status(403).json({ error: 'forbidden' });
+  if (!secret || !safeTimingEqual(secret, CONTROL_SECRET)) return res.status(403).json({ error: 'forbidden' });
   try {
     const result = handleCronAction(req.params.action, req.body || {}, req.query || {}, '/internal/cron');
     return res.json(result);
@@ -1316,3 +1304,26 @@ setInterval(() => {
     payload: getSystem(),
   });
 }, 3000);
+
+// Graceful shutdown
+function shutdown(signal) {
+  log('system.shutdown', `received ${signal}, shutting down gracefully`);
+  // Kill PTY process
+  if (terminalSession.proc) {
+    try { terminalSession.proc.kill(); } catch {}
+  }
+  // Close WebSocket connections
+  for (const client of wss.clients) {
+    try { client.close(1001, 'server shutting down'); } catch {}
+  }
+  // Close server
+  server.close(() => {
+    log('system.shutdown', 'server closed');
+    process.exit(0);
+  });
+  // Force exit after 5 seconds
+  setTimeout(() => process.exit(1), 5000);
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));

@@ -656,13 +656,7 @@ function renderTokens(snapshot) {
 }
 
 function renderBackground() {
-  els.backgroundPanel.innerHTML = `<div class="process-list">
-    ${[
-      { name: 'hermes-control', status: 'running', cpu: '3.1%', mem: '184 MB', note: 'dashboard runtime' },
-      { name: 'ws-bus', status: 'running', cpu: '0.8%', mem: '24 MB', note: 'live snapshot bus' },
-      { name: 'cron-worker', status: 'active', cpu: '0.5%', mem: '18 MB', note: 'scheduler loop' },
-    ].map((p) => `<div class="process-row"><div class="left"><div class="title">${escapeHtml(p.name)}</div><div class="sub">${escapeHtml(p.note)}</div></div><div class="value">${p.status} • ${p.mem} • ${p.cpu} cpu</div></div>`).join('')}
-  </div>`;
+  els.backgroundPanel.innerHTML = '<div class="small-meta" style="padding:12px;">Background process monitoring — coming soon</div>';
 }
 
 function markdownToHtml(md) {
@@ -900,11 +894,11 @@ function paintSprite(stateName, frameIndex) {
 }
 
 function normalizeAgentState(rawState, details = '') {
-  const state = String(rawState || details || 'idle').toLowerCase();
-  if (state.includes('error') || state.includes('fail') || state.includes('halt') || state.includes('panic')) return 'error';
-  if (state.includes('exec') || state.includes('run') || state.includes('busy')) return 'executing';
-  if (state.includes('coding') || state.includes('build')) return 'thinking';
-  if (state.includes('think') || state.includes('work')) return 'thinking';
+  const stateStr = String(rawState || details || 'idle').toLowerCase();
+  if (stateStr.includes('error') || stateStr.includes('fail') || stateStr.includes('halt') || stateStr.includes('panic')) return 'error';
+  if (stateStr.includes('exec') || stateStr.includes('run') || stateStr.includes('busy')) return 'executing';
+  if (stateStr.includes('coding') || stateStr.includes('build')) return 'thinking';
+  if (stateStr.includes('think') || stateStr.includes('work')) return 'thinking';
   return 'idle';
 }
 
@@ -1063,8 +1057,10 @@ async function login(password) {
 }
 
 async function logout() {
-  stopSessionsPoller();
-  await fetch('/api/logout', { method: 'POST' }).catch(() => {});
+  stopAutoRefresh();
+  const h = { 'Content-Type': 'application/json' };
+  if (state.csrfToken) h['X-CSRF-Token'] = state.csrfToken;
+  await fetch('/api/logout', { method: 'POST', headers: h }).catch(() => {});
   if (state.socket) {
     try { state.socket.close(); } catch {}
     state.socket = null;

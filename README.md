@@ -169,84 +169,35 @@ hermes-control-interface/
 
 ## Changelog
 
-### v1.1.0 — Stability Fixes (2026-04-09)
+### v1.5.0 — Open Source Readiness
+- MIT LICENSE, CONTRIBUTING.md, CODE_OF_CONDUCT.md
+- GitHub issue templates (bug report, feature request)
+- `engines` field (Node.js >= 20.0.0)
+- All repo URLs updated to https://github.com/xaspx/hermes-control-interface
 
-**Avatar system rewrite:**
-- Avatar served via dedicated `/api/avatar/image` endpoint (raw binary with cache headers)
-- No more ~700KB base64 embedded in every WebSocket snapshot
-- Client-side avatar image caching — no flicker on re-render
+### v1.4.0 — CSRF Protection + Security
+- CSRF token on all POST/PUT/DELETE endpoints
+- Helmet security headers (CSP, X-Frame-Options, nosniff)
+- bcrypt password hashing + reset-password script
 
-**Event-driven refresh (removed all polling):**
-- Removed server-side 15-second broadcast interval (`setInterval(broadcast, 15000)`)
-- Removed client-side 10-second session poller
-- Snapshots only broadcast on actual state changes (avatar upload/delete, cron actions, terminal events)
-- Manual refresh button still works for full state reload
+### v1.3.0 — Helmet + Animated GIF
+- Helmet middleware with safe CSP config
+- Animated GIF avatar support (`<img>` element)
+- Real-time system monitor via WebSocket (3s interval)
 
-**Smart rendering:**
-- Change detection on all panels — DOM only rebuilds when data actually changed
-- File explorer scroll position preserved across re-renders
-- Sessions list stable during avatar upload (no "no sessions found" flash)
-- Sprite animation loop skips when custom avatar is loaded
+### v1.2.0 — UI Cleanup + Real Insights
+- Remove state pill and Signal section from sidebar
+- Toast notifications (avatar, file save, layout)
+- Real token data from `hermes insights --days 7`
+- Auto-refresh toggle button (10s interval)
+
+### v1.1.0 — Stability Fixes
+- Avatar served via `/api/avatar/image` endpoint
+- Event-driven refresh (removed 15s broadcast + 10s polling)
+- Smart rendering with change detection
+- File explorer scroll position preserved
 
 ---
-
-## Roadmap
-
-Improvements grouped by dependency and parallelism (from senior software engineer audit):
-
-### Group 1 — Security + Password (Do together)
-- [ ] bcrypt password hashing (replace plaintext env)
-- [ ] reset-password CLI command
-- [ ] reset-password bash script
-- [ ] Non-root systemd user
-
-Why together: all touch auth/server config, one restart done.
-
-### Group 2 — Code Refactor (Do together)
-- [ ] Split server.js into modules (1250+ line monolith)
-- [ ] Replace `execFileSync` → `execFile` (async, non-blocking)
-- [ ] Remove dead code (renderBackground hardcode, offlineReply dummy, placeholder cronJobs)
-- [ ] Fix variable naming collision (`state` parameter vs global)
-- [ ] YAML config parsing (replace regex with proper parser)
-
-Why together: all touch server.js, doing one-by-one causes conflicts.
-
-### Group 3 — Open Source Docs + Config (Do together, parallel with Group 2)
-- [ ] CONTRIBUTING.md
-- [ ] CODE_OF_CONDUCT.md
-- [ ] Issue templates (.github/)
-- [ ] ESLint / Prettier config
-
-Why together: pure new files, doesn't interfere with code.
-
-### Group 4 — DevOps (After Group 2)
-- [ ] Dockerfile
-- [ ] CI/CD (GitHub Actions)
-
-Why together: Dockerfile needs final structure from Group 2. CI/CD needs test suite + lint config.
-
-### Group 5 — Testing (After Group 2)
-- [ ] Test suite minimal (auth, path traversal, API endpoints)
-
-Why last: tests written for already-refactored code.
-
-### Group 6 — Performance (Anytime)
-- [ ] Sessions Map eviction (memory leak prevention)
-- [ ] WebSocket connection timeout/cleanup
-
-Why independent: doesn't interfere with others.
-
-### Execution Order
-
-```
-Group 1 (Security)              ← start first, low impact
-    ↓
-Group 2 + Group 3 (parallel)    ← refactor code + docs together
-    ↓
-Group 4 + Group 5 (parallel)    ← Docker + CI + test
-    ↓
-Group 6 (Performance)           ← anytime
-```
 
 ## Troubleshooting
 
