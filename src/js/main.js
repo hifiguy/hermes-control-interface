@@ -113,6 +113,9 @@ document.getElementById('login-form')?.addEventListener('submit', async (e) => {
       state.user = data.user;
       errorEl.textContent = '';
       showApp();
+    } else if (data.error === 'first_run') {
+      // No users exist — show setup form
+      showSetup();
     } else {
       errorEl.textContent = data.error || 'Login failed';
     }

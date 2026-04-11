@@ -1631,6 +1631,169 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true, title: 'Hermes Control Interface', auth: true, ws: '/ws' });
 });
 
+// ============================================
+// Missing API Endpoints
+// ============================================
+
+// Auth providers (Hermes auth list)
+app.get('/api/auth/providers', requireRole('admin'), async (req, res) => {
+  try {
+    const raw = await shell('hermes auth list 2>&1');
+    const lines = raw.split('\n').filter(Boolean);
+    const providers = [];
+    for (const line of lines) {
+      const match = line.match(/(✓|✗|●|○)\s*(\w+)\s*(set|not set)/i);
+      if (match) {
+        providers.push({ name: match[2], set: match[3] === 'set' });
+      }
+    }
+    // Fallback: parse any line with provider names
+    if (providers.length === 0) {
+      const knownProviders = ['openrouter', 'anthropic', 'nous', 'openai', 'google', 'openai-codex', 'firecrawl', 'tavily'];
+      for (const p of knownProviders) {
+        if (raw.toLowerCase().includes(p)) {
+          providers.push({ name: p, set: raw.includes(p) && !raw.includes(`${p}\nnot set`) });
+        }
+      }
+    }
+    res.json({ ok: true, providers });
+  } catch (e) {
+    res.json({ ok: true, providers: [] });
+  }
+});
+
+// Skills list
+app.get('/api/skills', requireAuth, async (req, res) => {
+  try {
+    const raw = await shell('hermes skills list 2>&1');
+    const lines = raw.split('\n').filter(l => l.trim() && !l.startsWith('─') && !l.startsWith('Skill'));
+    const skills = [];
+    for (const line of lines) {
+      const parts = line.trim().split(/\s{2,}/);
+      if (parts.length >= 1) {
+        skills.push({
+          name: parts[0]?.replace(/[│◆]/g, '').trim() || '',
+          category: parts[1]?.trim() || 'uncategorized',
+          description: parts[2]?.trim() || '',
+          enabled: !line.includes('disabled'),
+        });
+      }
+    }
+    res.json({ ok: true, skills });
+  } catch (e) {
+    res.json({ ok: true, skills: [] });
+  }
+});
+
+// Config show
+app.get('/api/config/:profile', requireAuth, async (req, res) => {
+  try {
+    const profile = req.params.profile;
+    const home = profile === 'default' ? `${process.env.HOME}/.hermes` : `${process.env.HOME}/.hermes/profiles/${profile}`;
+    const configPath = `${home}/config.yaml`;
+    const raw = await shell(`cat "${configPath}" 2>/dev/null || echo "not_found"`);
+    if (raw.trim() === 'not_found') {
+      return res.json({ ok: false, error: 'Config not found' });
+    }
+    // Parse YAML
+    const yaml = require('yaml');
+    const config = yaml.parse(raw) || {};
+    res.json({ ok: true, config });
+  } catch (e) {
+    res.json({ ok: false, error: e.message });
+  }
+});
+
+// Memory data
+app.get('/api/memory/:profile', requireAuth, async (req, res) => {
+  try {
+    const profile = req.params.profile;
+    const home = profile === 'default' ? `${process.env.HOME}/.hermes` : `${process.env.HOME}/.hermes/profiles/${profile}`;
+    const [memoryContent, userContent] = await Promise.all([
+      shell(`cat "${home}/MEMORY.md" 2>/dev/null || echo ""`),
+      shell(`cat "${home}/USER.md" 2>/dev/null || echo ""`),
+    ]);
+    res.json({
+      ok: true,
+      memory_chars: memoryContent.length,
+      user_chars: userContent.length,
+      memory_content: memoryContent.substring(0, 500),
+      user_content: userContent.substring(0, 500),
+    });
+  } catch (e) {
+    res.json({ ok: false, error: e.message });
+  }
+});
+
+// Doctor
+app.post('/api/doctor', requireRole('admin'), async (req, res) => {
+  try {
+    const fix = req.body.fix ? '--fix' : '';
+    const output = await shell(`hermes doctor ${fix} 2>&1`, { timeout: 120 });
+    res.json({ ok: true, output });
+  } catch (e) {
+    res.json({ ok: false, output: e.message });
+  }
+});
+
+// Dump
+app.get('/api/dump', requireRole('admin'), async (req, res) => {
+  try {
+    const output = await shell('hermes dump --show-keys 2>&1', { timeout: 60 });
+    res.json({ ok: true, output });
+  } catch (e) {
+    res.json({ ok: false, output: e.message });
+  }
+});
+
+// Update
+app.post('/api/update', requireRole('admin'), async (req, res) => {
+  try {
+    const output = await shell('hermes update 2>&1', { timeout: 300 });
+    audit(req.hciUser?.username || 'unknown', req.hciUser?.role || 'unknown', 'HERMES_UPDATE', 'started');
+    res.json({ ok: true, output });
+  } catch (e) {
+    res.json({ ok: false, output: e.message });
+  }
+});
+
+// Session rename
+app.post('/api/sessions/:id/rename', requireCsrf, async (req, res) => {
+  try {
+    const { title } = req.body;
+    if (!title) return res.status(400).json({ ok: false, error: 'Title required' });
+    const output = await shell(`hermes sessions rename ${req.params.id} "${title.replace(/"/g, '\\"')}" 2>&1`);
+    audit(req.hciUser?.username || 'unknown', req.hciUser?.role || 'unknown', 'SESSION_RENAME', `${req.params.id} → ${title}`);
+    res.json({ ok: true, output });
+  } catch (e) {
+    res.json({ ok: false, error: e.message });
+  }
+});
+
+// Session export
+app.get('/api/sessions/:id/export', requireAuth, async (req, res) => {
+  try {
+    const tmpFile = `/tmp/session-${req.params.id}.jsonl`;
+    const output = await shell(`hermes sessions export ${tmpFile} --session-id ${req.params.id} 2>&1`);
+    const data = await shell(`cat ${tmpFile} 2>/dev/null`);
+    await shell(`rm -f ${tmpFile}`);
+    res.json({ ok: true, data: data || output });
+  } catch (e) {
+    res.json({ ok: false, error: e.message });
+  }
+});
+
+// Session delete
+app.delete('/api/sessions/:id', requireCsrf, async (req, res) => {
+  try {
+    const output = await shell(`hermes sessions delete ${req.params.id} 2>&1`);
+    audit(req.hciUser?.username || 'unknown', req.hciUser?.role || 'unknown', 'SESSION_DELETE', req.params.id);
+    res.json({ ok: true, output });
+  } catch (e) {
+    res.json({ ok: false, error: e.message });
+  }
+});
+
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`Hermes Control Interface running on port ${PORT}`);
   console.log('Password gate: env-secret only');
