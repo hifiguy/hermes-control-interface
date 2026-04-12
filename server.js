@@ -1563,6 +1563,61 @@ app.post('/api/file', requireCsrf, (req, res) => {
   }
 });
 
+// File listing API for File Explorer
+app.get('/api/files/list', requireAuth, (req, res) => {
+  const dirPath = String(req.query.path || '');
+  const baseDir = path.join(os.homedir(), '.hermes');
+  
+  // Security: ensure we stay within .hermes
+  const resolved = path.resolve(baseDir, dirPath);
+  if (!resolved.startsWith(baseDir)) {
+    return res.status(403).json({ error: 'access denied' });
+  }
+  
+  try {
+    if (!fs.existsSync(resolved)) {
+      return res.status(404).json({ error: 'directory not found' });
+    }
+    
+    const stat = fs.statSync(resolved);
+    if (!stat.isDirectory()) {
+      return res.status(400).json({ error: 'not a directory' });
+    }
+    
+    const items = fs.readdirSync(resolved).map(name => {
+      try {
+        const itemPath = path.join(resolved, name);
+        const itemStat = fs.statSync(itemPath);
+        return {
+          name,
+          type: itemStat.isDirectory() ? 'directory' : 'file',
+          size: itemStat.size,
+          modified: itemStat.mtime.toISOString(),
+          path: path.relative(baseDir, itemPath)
+        };
+      } catch {
+        return { name, type: 'unknown', path: path.relative(baseDir, path.join(resolved, name)) };
+      }
+    });
+    
+    // Sort: directories first, then files
+    items.sort((a, b) => {
+      if (a.type === 'directory' && b.type !== 'directory') return -1;
+      if (a.type !== 'directory' && b.type === 'directory') return 1;
+      return a.name.localeCompare(b.name);
+    });
+    
+    res.json({
+      ok: true,
+      path: path.relative(baseDir, resolved),
+      items,
+      parent: path.relative(baseDir, path.dirname(resolved))
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'failed to list directory' });
+  }
+});
+
 // Ensure terminal session exists
 app.post('/api/terminal/ensure', requireAuth, (req, res) => {
   try {

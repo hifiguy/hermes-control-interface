@@ -206,6 +206,9 @@ async function loadPage(page, params = {}) {
       case 'maintenance':
         await loadMaintenance(container);
         break;
+      case 'files':
+        await loadFileExplorer(container);
+        break;
       default:
         container.innerHTML = `<div class="empty">Page not found</div>`;
     }
@@ -231,12 +234,10 @@ async function loadHome(container) {
     </div>
     <div class="card-grid" id="home-cards">
       <div class="card"><div class="card-title">System Health</div><div class="loading">Loading</div></div>
-      <div class="card"><div class="card-title">Hermes Services</div><div class="loading">Loading</div></div>
-      <div class="card"><div class="card-title">Active Agent Status</div><div class="loading">Loading</div></div>
+      <div class="card"><div class="card-title">Agent Overview</div><div class="loading">Loading</div></div>
     </div>
     <div class="card-grid" id="home-bottom" style="margin-top:16px;">
       <div class="card"><div class="card-title">Gateways</div><div class="loading">Loading</div></div>
-      <div class="card"><div class="card-title">Quick Stats</div><div class="loading">Loading</div></div>
       <div class="card"><div class="card-title">Token Usage (7d)</div><div class="loading">Loading</div></div>
     </div>
   `;
@@ -249,7 +250,7 @@ async function loadHome(container) {
       api('/api/cron/list', { method: 'POST', body: '{}' }),
     ]);
 
-    // Row 1: System Health + Hermes Services + Active Agent Status
+    // Row 1: System Health + Agent Overview (merged)
     const cardsEl = document.getElementById('home-cards');
     if (healthRes.ok) {
       cardsEl.innerHTML = `
@@ -261,28 +262,21 @@ async function loadHome(container) {
           <div class="stat-row"><span class="stat-label">Uptime</span><span class="stat-value">${healthRes.uptime || 'N/A'}</span></div>
         </div>
         <div class="card">
-          <div class="card-title">Hermes Services</div>
-          <div class="stat-row"><span class="stat-label">Agent</span><span class="stat-value">${agentRes.ok ? (agentRes.model || 'N/A') : 'N/A'} · ${agentRes.ok ? (agentRes.provider || '') : ''}</span></div>
-          <div class="stat-row"><span class="stat-label">Gateway</span><span class="stat-value ${agentRes.ok && agentRes.gatewayStatus?.includes('running') ? 'status-ok' : 'status-off'}">● ${agentRes.ok ? (agentRes.gatewayStatus || 'unknown') : 'N/A'}</span></div>
-          <div class="stat-row"><span class="stat-label">Terminal</span><span class="stat-value status-ok">● active</span></div>
-          <div class="stat-row"><span class="stat-label">Cron</span><span class="stat-value">${cronRes?.jobs?.length || 0} jobs</span></div>
-          <div class="stat-row"><span class="stat-label">Sessions</span><span class="stat-value">${agentRes.ok ? `${agentRes.activeSessions || 0} active` : 'N/A'}</span></div>
-        </div>
-        <div class="card">
-          <div class="card-title">Active Agent Status</div>
+          <div class="card-title">Agent Overview</div>
           <div class="stat-row"><span class="stat-label">Model</span><span class="stat-value">${agentRes.ok ? (agentRes.model || 'N/A') : 'N/A'}</span></div>
           <div class="stat-row"><span class="stat-label">Provider</span><span class="stat-value">${agentRes.ok ? (agentRes.provider || 'N/A') : 'N/A'}</span></div>
-          <div class="stat-row"><span class="stat-label">Gateway</span><span class="stat-value ${agentRes.ok && agentRes.gatewayStatus?.includes('running') ? 'status-ok' : 'status-off'}">● ${agentRes.ok ? (agentRes.gatewayStatus || 'unknown') : 'N/A'}</span></div>
+          <div class="stat-row"><span class="stat-label">Gateway</span><span class="stat-value ${agentRes.ok && agentRes.gatewayStatus?.includes('running') ? 'status-ok' : 'status-off'}">${agentRes.ok ? (agentRes.gatewayStatus || 'N/A') : 'N/A'}</span></div>
           <div class="stat-row"><span class="stat-label">API Keys</span><span class="stat-value">${agentRes.ok ? `${agentRes.apiKeys?.active || 0}/${agentRes.apiKeys?.total || 0} active` : 'N/A'}</span></div>
-          <div class="stat-row"><span class="stat-label">Platforms</span><span class="stat-value">${agentRes.ok ? (agentRes.platforms?.filter(p => p.configured).map(p => p.name).join(', ') || 'none') : 'N/A'}</span></div>
+          <div class="stat-row"><span class="stat-label">Platforms</span><span class="stat-value">${agentRes.ok ? (agentRes.platforms?.filter(p => p.configured).map(p => p.name).join(', ') || 'None') : 'N/A'}</span></div>
+          <div class="stat-row"><span class="stat-label">Cron</span><span class="stat-value">${cronRes?.jobs?.length || 0} jobs</span></div>
+          <div class="stat-row"><span class="stat-label">Sessions</span><span class="stat-value">${agentRes.ok ? `${agentRes.activeSessions || 0} active` : 'N/A'}</span></div>
         </div>
       `;
     }
 
-    // Row 2: Gateways + Quick Stats + Token Usage
+    // Row 2: Gateways + Token Usage
     const bottomEl = document.getElementById('home-bottom');
     const profiles = profilesRes.ok && profilesRes.profiles ? profilesRes.profiles : [];
-    const running = profiles.filter(p => p.gateway === 'running').length;
     const gwHtml = profiles.map(p => {
       const cls = p.gateway === 'running' ? 'status-ok' : 'status-off';
       const txt = p.gateway === 'running' ? '● running' : '○ stopped';
@@ -293,12 +287,6 @@ async function loadHome(container) {
       <div class="card">
         <div class="card-title">Gateways</div>
         ${gwHtml || '<div class="stat-row"><span class="stat-label">No profiles</span></div>'}
-      </div>
-      <div class="card">
-        <div class="card-title">Quick Stats</div>
-        <div class="stat-row"><span class="stat-label">Version</span><span class="stat-value">${healthRes.hermes_version || 'N/A'}</span></div>
-        <div class="stat-row"><span class="stat-label">Agents</span><span class="stat-value">${profiles.length} total · ${running} running</span></div>
-        <div class="stat-row"><span class="stat-label">Sessions</span><span class="stat-value">${healthRes.sessions || 0}</span></div>
       </div>
       <div class="card">
         <div class="card-title">Token Usage (7d)</div>
@@ -693,7 +681,14 @@ function openTerminalPanel(title, command) {
   panel.innerHTML = `
     <div class="terminal-header">
       <span class="terminal-title">${escapeHtml(title)}</span>
-      <span class="terminal-close" onclick="document.getElementById('main').style.bottom='0'; this.closest('.terminal-panel').remove()">×</span>
+      <div class="terminal-controls">
+        <span class="terminal-touch-btn" onclick="terminalKey('ArrowUp')" title="Up">↑</span>
+        <span class="terminal-touch-btn" onclick="terminalKey('ArrowDown')" title="Down">↓</span>
+        <span class="terminal-touch-btn" onclick="terminalKey(' ')" title="Space">␣</span>
+        <span class="terminal-touch-btn" onclick="terminalKey('Enter')" title="Enter">↵</span>
+        <span class="terminal-btn" id="terminal-fullscreen" onclick="toggleTerminalFullscreen()">⛶</span>
+        <span class="terminal-close" onclick="document.getElementById('main').style.bottom='0'; this.closest('.terminal-panel').remove()">×</span>
+      </div>
     </div>
     <div class="terminal-body" id="terminal-body"></div>
   `;
@@ -748,6 +743,8 @@ async function loadXtermAndConnect(command) {
     term.loadAddon(fitAddon);
     term.open(bodyEl);
     fitAddon.fit();
+    term._fitAddon = fitAddon;
+    termInstance = term;
 
     term.write('Connecting...\r\n');
 
@@ -759,6 +756,7 @@ async function loadXtermAndConnect(command) {
     // Connect WebSocket
     const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${wsProtocol}//${location.host}/ws`);
+    termWs = ws;
 
     let commandSent = false;
 
@@ -1173,13 +1171,13 @@ async function loadUsage(container) {
         <div class="page-subtitle">Token usage, costs, and activity breakdown</div>
       </div>
       <div style="display:flex;gap:8px;">
-        <select id="usage-days" class="log-level-select">
+        <select id="usage-days" class="select">
           <option value="1">Today</option>
           <option value="7" selected>7 days</option>
           <option value="30">30 days</option>
           <option value="90">90 days</option>
         </select>
-        <select id="usage-agent" class="log-level-select">
+        <select id="usage-agent" class="select">
           <option value="">All agents</option>
         </select>
         <button class="btn btn-ghost" onclick="loadUsage(document.querySelector('.page.active'))">↻ Refresh</button>
@@ -1211,9 +1209,11 @@ async function loadUsage(container) {
     // Fetch usage data
     await fetchUsageData();
 
-    // Bind filter change events
-    document.getElementById('usage-days')?.addEventListener('change', fetchUsageData);
-    document.getElementById('usage-agent')?.addEventListener('change', fetchUsageData);
+    // Bind refresh button (NOT filter change events)
+    document.querySelector('#usage-overview + div .btn, #usage-overview ~ div .btn, #usage-tools + div .btn, [onclick*="loadUsage"]')?.addEventListener('click', (e) => {
+      e.preventDefault();
+      fetchUsageData();
+    });
 
   } catch (e) {
     document.getElementById('usage-overview').innerHTML = `<div class="card"><div class="card-title">Error</div><div class="error-msg">${e.message}</div></div>`;
@@ -2064,6 +2064,137 @@ async function customPrompt(message, defaultValue = '', title = 'Input') {
 }
 
 // ============================================
+// File Explorer
+// ============================================
+async function loadFileExplorer(container, dirPath = '') {
+  container.innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="page-title">File Explorer</div>
+        <div class="page-subtitle">.hermes directory browser</div>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-ghost" onclick="loadFileExplorer(document.querySelector('.page.active'), '')">⌂ Root</button>
+        <button class="btn btn-ghost" onclick="loadFileExplorer(document.querySelector('.page.active'), '${dirPath}')">↻ Refresh</button>
+      </div>
+    </div>
+    <div class="card" id="file-explorer">
+      <div class="loading">Loading files...</div>
+    </div>
+    <div class="card" id="file-content" style="margin-top:16px;display:none;">
+      <div class="card-title">File Content</div>
+      <pre class="file-content" id="file-content-text" style="white-space:pre-wrap;word-break:break-all;max-height:500px;overflow:auto;font-size:12px;background:var(--bg-card);padding:12px;border-radius:var(--radius);"></pre>
+    </div>
+  `;
+
+  try {
+    const res = await api(`/api/files/list?path=${encodeURIComponent(dirPath)}`);
+    const el = document.getElementById('file-explorer');
+    
+    if (!res.ok) {
+      el.innerHTML = `<div class="error-msg">${res.error || 'Failed to load files'}</div>`;
+      return;
+    }
+
+    // Breadcrumb
+    const parts = res.path ? res.path.split('/').filter(Boolean) : [];
+    let breadcrumb = `<span class="file-link" onclick="loadFileExplorer(document.querySelector('.page.active'), '')">⌂ .hermes</span>`;
+    let accum = '';
+    for (const part of parts) {
+      accum += '/' + part;
+      breadcrumb += ` / <span class="file-link" onclick="loadFileExplorer(document.querySelector('.page.active'), '${accum.slice(1)}')">${part}</span>`;
+    }
+
+    // File list
+    let itemsHtml = '';
+    if (res.path) {
+      itemsHtml = `<div class="file-item file-dir" onclick="loadFileExplorer(document.querySelector('.page.active'), '${res.parent}')">
+        <span class="file-icon">📁</span>
+        <span class="file-name">..</span>
+        <span class="file-meta">parent</span>
+      </div>`;
+    }
+    
+    for (const item of res.items) {
+      const icon = item.type === 'directory' ? '📁' : '📄';
+      const cls = item.type === 'directory' ? 'file-dir' : 'file-file';
+      const size = item.type === 'file' ? formatFileSize(item.size) : '';
+      const action = item.type === 'directory' 
+        ? `loadFileExplorer(document.querySelector('.page.active'), '${item.path}')`
+        : `loadFileContent('${item.path}')`;
+      itemsHtml += `<div class="file-item ${cls}" onclick="${action}">
+        <span class="file-icon">${icon}</span>
+        <span class="file-name">${item.name}</span>
+        <span class="file-meta">${size}</span>
+      </div>`;
+    }
+
+    el.innerHTML = `
+      <div class="file-breadcrumb">${breadcrumb}</div>
+      <div class="file-list">${itemsHtml || '<div class="empty">Empty directory</div>'}</div>
+    `;
+  } catch (e) {
+    document.getElementById('file-explorer').innerHTML = `<div class="error-msg">${e.message}</div>`;
+  }
+}
+
+async function loadFileContent(filePath) {
+  const contentEl = document.getElementById('file-content');
+  const textEl = document.getElementById('file-content-text');
+  contentEl.style.display = 'block';
+  textEl.textContent = 'Loading...';
+  
+  try {
+    const res = await api(`/api/file?path=${encodeURIComponent(filePath)}`);
+    if (res.ok) {
+      textEl.textContent = res.content || '(empty file)';
+      document.querySelector('#file-content .card-title').textContent = `File: ${filePath}`;
+    } else {
+      textEl.textContent = `Error: ${res.error || 'Could not read file'}`;
+    }
+  } catch (e) {
+    textEl.textContent = `Error: ${e.message}`;
+  }
+}
+
+function formatFileSize(bytes) {
+  if (!bytes) return '';
+  if (bytes >= 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + 'MB';
+  if (bytes >= 1024) return (bytes / 1024).toFixed(1) + 'KB';
+  return bytes + 'B';
+}
+
+// ============================================
+// Terminal Touch Controls & Fullscreen
+// ============================================
+let termWs = null;
+let termInstance = null;
+
+function terminalKey(key) {
+  if (!termWs || termWs.readyState !== 1) return;
+  const data = key === 'Enter' ? '\r' : key;
+  termWs.send(JSON.stringify({ type: 'terminal-input', data }));
+}
+
+function toggleTerminalFullscreen() {
+  const panel = document.querySelector('.terminal-panel');
+  if (!panel) return;
+  const isFullscreen = panel.classList.toggle('terminal-fullscreen');
+  document.getElementById('terminal-fullscreen').textContent = isFullscreen ? '⊡' : '⛶';
+  if (isFullscreen) {
+    document.getElementById('main').style.bottom = '0';
+  } else {
+    document.getElementById('main').style.bottom = '45vh';
+  }
+  // Refit terminal
+  setTimeout(() => {
+    if (termInstance && termInstance._fitAddon) {
+      termInstance._fitAddon.fit();
+    }
+  }, 100);
+}
+
+// ============================================
 // Export functions to window for onclick handlers
 // ============================================
 Object.assign(window, {
@@ -2076,9 +2207,11 @@ Object.assign(window, {
   loadAgentGateway,
   loadAgentConfig,
   loadAgentMemory,
-  loadMonitor,
+  loadUsage,
   loadSkills,
   loadMaintenance,
+  loadFileExplorer,
+  loadFileContent,
   setAgentDefault,
   resumeSession,
   openTerminalPanel,
@@ -2091,6 +2224,8 @@ Object.assign(window, {
   runDoctor,
   runDump,
   runUpdate,
+  terminalKey,
+  toggleTerminalFullscreen,
   showCreateAgent,
   showCreateUser,
   createUser,
