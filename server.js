@@ -429,6 +429,34 @@ function sendTerminalInput(command) {
   return { ok: true, queued: true };
 }
 
+// ============================================
+// Input Sanitization — allowlist regex for shell injection prevention
+// ============================================
+function sanitizeProfileName(name) {
+  const s = String(name || '').trim();
+  if (!/^[a-zA-Z0-9_-]+$/.test(s)) return null;
+  return s;
+}
+
+function sanitizeSessionId(id) {
+  const s = String(id || '').trim();
+  if (!/^[a-zA-Z0-9_.@-]+$/.test(s)) return null;
+  return s;
+}
+
+function sanitizeTitle(title) {
+  const s = String(title || '').trim();
+  if (s.length > 200) return null;
+  if (!/^[a-zA-Z0-9 _!?@#.()\-]+$/u.test(s)) return null;
+  return s;
+}
+
+function sanitizeGatewayAction(action) {
+  const valid = ['start', 'stop', 'restart', 'enable', 'disable'];
+  const s = String(action || '').trim().toLowerCase();
+  return valid.includes(s) ? s : null;
+}
+
 function isAllowedPath(filePath) {
   const abs = path.resolve(filePath);
   return ROOTS.some(({ root }) => abs === path.resolve(root) || abs.startsWith(path.resolve(root) + path.sep));
@@ -633,16 +661,16 @@ async function getCronJobs() {
 }
 getCronJobs.cache = { at: 0, data: [] };
 
-function handleCronAction(action, body = {}, query = {}, source = '/api/cron') {
+async function handleCronAction(action, body = {}, query = {}, source = '/api/cron') {
   const normalized = String(action || '').toLowerCase();
   if (normalized === 'list') {
-    return { ok: true, action: normalized, jobs: getCronJobs() };
+    return { ok: true, action: normalized, jobs: await getCronJobs() };
   }
   if (normalized === 'add') {
     const schedule = body.schedule || query.schedule || '';
     const note = body.note || body.message || body.text || query.note || query.message || query.text || '';
     const job = addCronJob({ schedule, note, source: body.source || source });
-    return { ok: true, action: normalized, job, jobs: getCronJobs() };
+    return { ok: true, action: normalized, job, jobs: await getCronJobs() };
   }
   if (normalized === 'remove') {
     const id = String(body.id || query.id || '');
@@ -651,7 +679,7 @@ function handleCronAction(action, body = {}, query = {}, source = '/api/cron') {
       if (cronJobs[i].id === id || cronJobs[i].name === id) cronJobs.splice(i, 1);
     }
     broadcast();
-    return { ok: true, action: normalized, removed: before - cronJobs.length, jobs: getCronJobs() };
+    return { ok: true, action: normalized, removed: before - cronJobs.length, jobs: await getCronJobs() };
   }
   if (normalized === 'pause' || normalized === 'resume') {
     const id = String(body.id || query.id || '');
@@ -663,7 +691,7 @@ function handleCronAction(action, body = {}, query = {}, source = '/api/cron') {
     }
     job.status = normalized === 'pause' ? 'PAUSED' : 'ACTIVE';
     broadcast();
-    return { ok: true, action: normalized, job, jobs: getCronJobs() };
+    return { ok: true, action: normalized, job, jobs: await getCronJobs() };
   }
   const error = new Error(`unsupported cron action: ${normalized}`);
   error.statusCode = 400;
@@ -1275,11 +1303,18 @@ app.get('/api/system/health', requireAuth, async (req, res) => {
       shell("hermes profile list 2>&1 | wc -l"),
       shell("hermes sessions list --limit 1000 2>&1 | wc -l"),
     ]);
+    // Format uptime from process.uptime()
+    const upSec = process.uptime();
+    const upDays = Math.floor(upSec / 86400);
+    const upHrs = Math.floor((upSec % 86400) / 3600);
+    const upMins = Math.floor((upSec % 3600) / 60);
+    const uptime = upDays > 0 ? `${upDays}d ${upHrs}h ${upMins}m` : upHrs > 0 ? `${upHrs}h ${upMins}m` : `${upMins}m`;
     res.json({
       ok: true,
       cpu: cpu.trim() || 'N/A',
       ram: ram.trim() || 'N/A',
       disk: disk.trim() || 'N/A',
+      uptime,
       hermes_version: version.trim() || 'N/A',
       agents: Math.max(0, parseInt(agents.trim()) - 2) || 0, // subtract header lines
       sessions: Math.max(0, parseInt(sessions.trim()) - 2) || 0,
@@ -1370,7 +1405,7 @@ app.get('/api/sessions', requireAuth, (req, res) => {
 
 app.get('/api/all-sessions', requireAuth, async (req, res) => {
   // Sessions list — can filter by profile
-  const profile = req.query.profile;
+  const profile = sanitizeProfileName(req.query.profile) || undefined;
   const data = await getAllSessions(profile);
   res.json({ ok: true, sessions: data, cachedAt: hermesAllSessionsCache.at });
 });
@@ -1416,8 +1451,8 @@ app.get('/api/profiles', requireAuth, async (req, res) => {
 });
 
 app.post('/api/profiles/use', requireCsrf, async (req, res) => {
-  const name = String(req.body?.profile || '').trim();
-  if (!name) return res.status(400).json({ error: 'profile name required' });
+  const name = sanitizeProfileName(req.body?.profile);
+  if (!name) return res.status(400).json({ error: 'invalid profile name (allowed: a-z, A-Z, 0-9, _, -)' });
   try {
     const result = await shell(`hermes profile use ${name}`, '10s');
     // Invalidate profiles cache so next fetch shows updated active profile
@@ -1435,7 +1470,8 @@ function getGatewayServiceName(profile) {
 }
 
 app.get('/api/gateway/:profile', requireAuth, async (req, res) => {
-  const profile = req.params.profile;
+  const profile = sanitizeProfileName(req.params.profile);
+  if (!profile) return res.status(400).json({ error: 'invalid profile name' });
   const svc = getGatewayServiceName(profile);
   try {
     const [isActive, isEnabled, status] = await Promise.all([
@@ -1457,13 +1493,12 @@ app.get('/api/gateway/:profile', requireAuth, async (req, res) => {
 });
 
 app.post('/api/gateway/:profile/:action', requireCsrf, async (req, res) => {
-  const profile = req.params.profile;
-  const action = req.params.action; // start, stop, restart, enable, disable
-  const svc = getGatewayServiceName(profile);
+  const profile = sanitizeProfileName(req.params.profile);
+  const action = sanitizeGatewayAction(req.params.action);
+  const svc = profile ? getGatewayServiceName(profile) : null;
 
-  if (!['start', 'stop', 'restart', 'enable', 'disable'].includes(action)) {
-    return res.status(400).json({ error: 'invalid action' });
-  }
+  if (!profile) return res.status(400).json({ error: 'invalid profile name' });
+  if (!action) return res.status(400).json({ error: 'invalid action (allowed: start, stop, restart, enable, disable)' });
 
   try {
     // Check if service exists first
@@ -1473,6 +1508,7 @@ app.post('/api/gateway/:profile/:action', requireCsrf, async (req, res) => {
     }
     const result = await shell(`systemctl ${action} ${svc} 2>&1`);
     const isActive = (await shell(`systemctl is-active ${svc} 2>/dev/null || echo inactive`)).trim() === 'active';
+    addNotification(isActive ? 'success' : 'info', `Gateway ${profile}: ${action} ${isActive ? '→ running' : '→ stopped'}`);
     res.json({ ok: true, profile, action, active: isActive, output: result.trim() });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -1480,7 +1516,8 @@ app.post('/api/gateway/:profile/:action', requireCsrf, async (req, res) => {
 });
 
 app.get('/api/gateway/:profile/logs', requireAuth, async (req, res) => {
-  const profile = req.params.profile;
+  const profile = sanitizeProfileName(req.params.profile);
+  if (!profile) return res.status(400).json({ error: 'invalid profile name' });
   const svc = getGatewayServiceName(profile);
   const lines = Math.min(parseInt(req.query.lines || '50', 10), 500);
   try {
@@ -1536,13 +1573,13 @@ app.post('/api/terminal/ensure', requireAuth, (req, res) => {
   }
 });
 
-app.post('/api/terminal/exec', requireCsrf, (req, res) => {
+app.post('/api/terminal/exec', requireCsrf, async (req, res) => {
   const command = String(req.body?.command || '').trim();
   if (!command) return res.status(400).json({ error: 'command required' });
   if (command.length > 4096) return res.status(400).json({ error: 'command too long (max 4096 chars)' });
   log('terminal.input', command.slice(0, 120));
   try {
-    const special = maybeHandleSpecialTerminalCommand(command);
+    const special = await maybeHandleSpecialTerminalCommand(command);
     if (special) {
       appendTerminalOutput(`
 [cron] ${String(command).replace(/^\//, '')}
@@ -1624,20 +1661,20 @@ function addCronJob({ schedule, note, source = '/cron add' }) {
   return job;
 }
 
-app.post('/api/cron/:action', requireCsrf, (req, res) => {
+app.post('/api/cron/:action', requireCsrf, async (req, res) => {
   try {
-    const result = handleCronAction(req.params.action, req.body || {}, req.query || {}, '/api/cron');
+    const result = await handleCronAction(req.params.action, req.body || {}, req.query || {}, '/api/cron');
     return res.json(result);
   } catch (error) {
     return res.status(error.statusCode || 400).json({ error: error.message || 'cron action failed' });
   }
 });
 
-app.post('/internal/cron/:action', (req, res) => {
+app.post('/internal/cron/:action', async (req, res) => {
   const secret = String(req.get('x-hermes-control-secret') || '');
   if (!secret || !safeTimingEqual(secret, CONTROL_SECRET)) return res.status(403).json({ error: 'forbidden' });
   try {
-    const result = handleCronAction(req.params.action, req.body || {}, req.query || {}, '/internal/cron');
+    const result = await handleCronAction(req.params.action, req.body || {}, req.query || {}, '/internal/cron');
     return res.json(result);
   } catch (error) {
     return res.status(error.statusCode || 400).json({ error: error.message || 'cron action failed' });
@@ -1818,7 +1855,8 @@ app.get('/api/skills', requireAuth, async (req, res) => {
 // Config show
 app.get('/api/config/:profile', requireAuth, async (req, res) => {
   try {
-    const profile = req.params.profile;
+    const profile = sanitizeProfileName(req.params.profile);
+    if (!profile) return res.status(400).json({ ok: false, error: 'invalid profile name' });
     const home = profile === 'default' ? `${process.env.HOME}/.hermes` : `${process.env.HOME}/.hermes/profiles/${profile}`;
     const configPath = `${home}/config.yaml`;
     const raw = await shell(`cat "${configPath}" 2>/dev/null || echo "not_found"`);
@@ -1837,7 +1875,8 @@ app.get('/api/config/:profile', requireAuth, async (req, res) => {
 // Memory data
 app.get('/api/memory/:profile', requireAuth, async (req, res) => {
   try {
-    const profile = req.params.profile;
+    const profile = sanitizeProfileName(req.params.profile);
+    if (!profile) return res.status(400).json({ ok: false, error: 'invalid profile name' });
     const home = profile === 'default' ? `${process.env.HOME}/.hermes` : `${process.env.HOME}/.hermes/profiles/${profile}`;
     const memoriesDir = profile === 'default' ? `${process.env.HOME}/.hermes/memories` : `${home}/memories`;
     const [memoryContent, userContent, soulContent] = await Promise.all([
@@ -1884,7 +1923,7 @@ app.get('/api/dump', requireRole('admin'), async (req, res) => {
 // Update
 app.post('/api/update', requireRole('admin'), async (req, res) => {
   try {
-    const output = await shell('hermes update 2>&1', '300s');
+    const output = await shell('hermes update --gateway 2>&1', '300s');
     audit(req.hciUser?.username || 'unknown', req.hciUser?.role || 'unknown', 'HERMES_UPDATE', 'started');
     res.json({ ok: true, output });
   } catch (e) {
@@ -1895,10 +1934,13 @@ app.post('/api/update', requireRole('admin'), async (req, res) => {
 // Session rename
 app.post('/api/sessions/:id/rename', requireCsrf, async (req, res) => {
   try {
-    const { title } = req.body;
-    if (!title) return res.status(400).json({ ok: false, error: 'Title required' });
-    const output = await shell(`hermes sessions rename ${req.params.id} "${title.replace(/"/g, '\\"')}" 2>&1`);
+    const sessionId = sanitizeSessionId(req.params.id);
+    if (!sessionId) return res.status(400).json({ ok: false, error: 'invalid session id' });
+    const title = sanitizeTitle(req.body?.title);
+    if (!title) return res.status(400).json({ ok: false, error: 'invalid title (allowed: a-z, A-Z, 0-9, spaces, basic punctuation)' });
+    const output = await shell(`hermes sessions rename ${sessionId} \"${title.replace(/\"/g, '\\\\\"')}\" 2>&1`);
     audit(req.hciUser?.username || 'unknown', req.hciUser?.role || 'unknown', 'SESSION_RENAME', `${req.params.id} → ${title}`);
+    addNotification('info', `Session renamed: ${sessionId.slice(0, 12)}… → ${title}`);
     res.json({ ok: true, output });
   } catch (e) {
     res.json({ ok: false, error: e.message });
@@ -1908,8 +1950,10 @@ app.post('/api/sessions/:id/rename', requireCsrf, async (req, res) => {
 // Session export
 app.get('/api/sessions/:id/export', requireAuth, async (req, res) => {
   try {
-    const tmpFile = `/tmp/session-${req.params.id}.jsonl`;
-    const output = await shell(`hermes sessions export ${tmpFile} --session-id ${req.params.id} 2>&1`);
+    const sessionId = sanitizeSessionId(req.params.id);
+    if (!sessionId) return res.status(400).json({ ok: false, error: 'invalid session id' });
+    const tmpFile = `/tmp/session-${sessionId}.jsonl`;
+    const output = await shell(`hermes sessions export ${tmpFile} --session-id ${sessionId} 2>&1`);
     const data = await shell(`cat ${tmpFile} 2>/dev/null`);
     await shell(`rm -f ${tmpFile}`);
     res.json({ ok: true, data: data || output });
@@ -1921,8 +1965,11 @@ app.get('/api/sessions/:id/export', requireAuth, async (req, res) => {
 // Session delete
 app.delete('/api/sessions/:id', requireCsrf, async (req, res) => {
   try {
-    const output = await shell(`hermes sessions delete ${req.params.id} 2>&1`);
+    const sessionId = sanitizeSessionId(req.params.id);
+    if (!sessionId) return res.status(400).json({ ok: false, error: 'invalid session id' });
+    const output = await shell(`hermes sessions delete ${sessionId} 2>&1`);
     audit(req.hciUser?.username || 'unknown', req.hciUser?.role || 'unknown', 'SESSION_DELETE', req.params.id);
+    addNotification('info', `Session deleted: ${sessionId.slice(0, 12)}…`);
     res.json({ ok: true, output });
   } catch (e) {
     res.json({ ok: false, error: e.message });
@@ -1943,7 +1990,7 @@ app.get('/api/sessions/stats', requireAuth, async (req, res) => {
 app.get('/api/usage/:days', requireAuth, async (req, res) => {
   try {
     const days = Math.min(parseInt(req.params.days || '7', 10), 90);
-    const profile = req.query.profile;
+    const profile = sanitizeProfileName(req.query.profile) || undefined;
     const cmd = profile ? `hermes --profile ${profile} insights --days ${days}` : `hermes insights --days ${days}`;
     const raw = await shell(`${cmd} 2>&1`);
     const parsed = parseInsights(raw);
@@ -2024,9 +2071,11 @@ function parseInsights(raw) {
 // Create agent (profile)
 app.post('/api/profiles/create', requireRole('admin'), async (req, res) => {
   try {
-    const { name, cloneArg, cloneSource } = req.body || {};
-    if (!name) return res.status(400).json({ ok: false, error: 'Profile name required' });
-    const safeName = name.replace(/[^a-zA-Z0-9_-]/g, '');
+    const rawName = String(req.body?.name || '').trim();
+    const safeName = sanitizeProfileName(rawName);
+    if (!safeName) return res.status(400).json({ ok: false, error: 'invalid profile name (allowed: a-z, A-Z, 0-9, _, -)' });
+    const cloneArg = req.body?.cloneArg;
+    const cloneSource = sanitizeProfileName(req.body?.cloneSource);
     let cmd = `hermes profile create ${safeName}`;
     if (cloneArg === '--clone') cmd += ' --clone';
     else if (cloneArg === '--clone-from' && cloneSource) cmd += ` --clone-from ${cloneSource.replace(/[^a-zA-Z0-9_-]/g, '')}`;
@@ -2048,7 +2097,8 @@ app.post('/api/profiles/create', requireRole('admin'), async (req, res) => {
 // Delete agent (profile)
 app.delete('/api/profiles/:name', requireRole('admin'), async (req, res) => {
   try {
-    const name = req.params.name;
+    const name = sanitizeProfileName(req.params.name);
+    if (!name) return res.status(400).json({ ok: false, error: 'invalid profile name' });
     if (name === 'default') return res.status(400).json({ ok: false, error: 'Cannot delete default profile' });
     const output = await shell(`hermes profile delete ${name} -y 2>&1`);
     audit(req.hciUser?.username || 'unknown', req.hciUser?.role || 'unknown', 'PROFILE_DELETE', name);
@@ -2063,7 +2113,8 @@ app.delete('/api/profiles/:name', requireRole('admin'), async (req, res) => {
 // Agent insights (per profile)
 app.get('/api/insights/:profile/:days', requireAuth, async (req, res) => {
   try {
-    const profile = req.params.profile;
+    const profile = sanitizeProfileName(req.params.profile);
+    if (!profile) return res.status(400).json({ ok: false, error: 'invalid profile name' });
     const days = Math.min(parseInt(req.params.days || '7', 10), 90);
     const output = await shell(`hermes --profile ${profile} insights --days ${days} 2>&1`);
     res.json({ ok: true, output });
@@ -2103,7 +2154,7 @@ wss.on('connection', async (socket, req) => {
       rows: terminalSession.rows,
     }));
   }
-  socket.on('message', (raw) => {
+  socket.on('message', async (raw) => {
     try {
       const msg = JSON.parse(raw.toString());
       if (msg.type === 'ping') socket.send(JSON.stringify({ type: 'pong', ts: Date.now() }));
@@ -2113,7 +2164,7 @@ wss.on('connection', async (socket, req) => {
         const command = data.replace(/[\r\n]+$/g, '');
         if (/^\/cron\s+/i.test(command)) {
           try {
-            maybeHandleSpecialTerminalCommand(command);
+            await maybeHandleSpecialTerminalCommand(command);
             appendTerminalOutput(`\r\n[cron] ${command.slice(1)}\r\n`);
           } catch (error) {
             appendTerminalOutput(`\r\n[error] ${error.message}\r\n`);

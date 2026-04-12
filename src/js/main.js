@@ -197,8 +197,8 @@ async function loadPage(page, params = {}) {
       case 'agent-detail':
         await loadAgentDetail(container, params);
         break;
-      case 'monitor':
-        await loadMonitor(container);
+      case 'usage':
+        await loadUsage(container);
         break;
       case 'skills':
         await loadSkills(container);
@@ -231,24 +231,25 @@ async function loadHome(container) {
     </div>
     <div class="card-grid" id="home-cards">
       <div class="card"><div class="card-title">System Health</div><div class="loading">Loading</div></div>
-      <div class="card"><div class="card-title">Hermes</div><div class="loading">Loading</div></div>
-      <div class="card"><div class="card-title">Services</div><div class="loading">Loading</div></div>
+      <div class="card"><div class="card-title">Hermes Services</div><div class="loading">Loading</div></div>
+      <div class="card"><div class="card-title">Active Agent Status</div><div class="loading">Loading</div></div>
     </div>
-    <div class="card-grid" id="home-quick" style="margin-top:16px;">
+    <div class="card-grid" id="home-bottom" style="margin-top:16px;">
+      <div class="card"><div class="card-title">Gateways</div><div class="loading">Loading</div></div>
       <div class="card"><div class="card-title">Quick Stats</div><div class="loading">Loading</div></div>
       <div class="card"><div class="card-title">Token Usage (7d)</div><div class="loading">Loading</div></div>
     </div>
   `;
 
-  // Fetch system health + profiles + agent status in parallel
   try {
-    const [healthRes, profilesRes, agentRes] = await Promise.all([
+    const [healthRes, profilesRes, agentRes, cronRes] = await Promise.all([
       api('/api/system/health'),
       api('/api/profiles'),
       api('/api/agent/status'),
+      api('/api/cron/list', { method: 'POST', body: '{}' }),
     ]);
 
-    // System Health card
+    // Row 1: System Health + Hermes Services + Active Agent Status
     const cardsEl = document.getElementById('home-cards');
     if (healthRes.ok) {
       cardsEl.innerHTML = `
@@ -257,12 +258,15 @@ async function loadHome(container) {
           <div class="stat-row"><span class="stat-label">CPU</span><span class="stat-value">${healthRes.cpu || 'N/A'}</span></div>
           <div class="stat-row"><span class="stat-label">RAM</span><span class="stat-value">${healthRes.ram || 'N/A'}</span></div>
           <div class="stat-row"><span class="stat-label">Disk</span><span class="stat-value">${healthRes.disk || 'N/A'}</span></div>
+          <div class="stat-row"><span class="stat-label">Uptime</span><span class="stat-value">${healthRes.uptime || 'N/A'}</span></div>
         </div>
         <div class="card">
-          <div class="card-title">Hermes</div>
-          <div class="stat-row"><span class="stat-label">Version</span><span class="stat-value">${healthRes.hermes_version || 'N/A'}</span></div>
-          <div class="stat-row"><span class="stat-label">Agents</span><span class="stat-value">${healthRes.agents || 0}</span></div>
-          <div class="stat-row"><span class="stat-label">Sessions</span><span class="stat-value">${healthRes.sessions || 0}</span></div>
+          <div class="card-title">Hermes Services</div>
+          <div class="stat-row"><span class="stat-label">Agent</span><span class="stat-value">${agentRes.ok ? (agentRes.model || 'N/A') : 'N/A'} · ${agentRes.ok ? (agentRes.provider || '') : ''}</span></div>
+          <div class="stat-row"><span class="stat-label">Gateway</span><span class="stat-value ${agentRes.ok && agentRes.gatewayStatus?.includes('running') ? 'status-ok' : 'status-off'}">● ${agentRes.ok ? (agentRes.gatewayStatus || 'unknown') : 'N/A'}</span></div>
+          <div class="stat-row"><span class="stat-label">Terminal</span><span class="stat-value status-ok">● active</span></div>
+          <div class="stat-row"><span class="stat-label">Cron</span><span class="stat-value">${cronRes?.jobs?.length || 0} jobs</span></div>
+          <div class="stat-row"><span class="stat-label">Sessions</span><span class="stat-value">${agentRes.ok ? `${agentRes.activeSessions || 0} active` : 'N/A'}</span></div>
         </div>
         <div class="card">
           <div class="card-title">Active Agent Status</div>
@@ -275,43 +279,34 @@ async function loadHome(container) {
       `;
     }
 
-    // Quick Stats + Profiles
-    const quickEl = document.getElementById('home-quick');
-    if (profilesRes.ok && profilesRes.profiles) {
-      const profiles = profilesRes.profiles;
-      const running = profiles.filter(p => p.gateway === 'running').length;
-      const profilesHtml = profiles.map(p => {
-        const statusClass = p.gateway === 'running' ? 'status-ok' : 'status-off';
-        const statusText = p.gateway === 'running' ? '● on' : '○ off';
-        return `<div class="stat-row"><span class="stat-label">${p.name}</span><span class="stat-value ${statusClass}">${statusText} · ${p.model || '—'}</span></div>`;
-      }).join('');
+    // Row 2: Gateways + Quick Stats + Token Usage
+    const bottomEl = document.getElementById('home-bottom');
+    const profiles = profilesRes.ok && profilesRes.profiles ? profilesRes.profiles : [];
+    const running = profiles.filter(p => p.gateway === 'running').length;
+    const gwHtml = profiles.map(p => {
+      const cls = p.gateway === 'running' ? 'status-ok' : 'status-off';
+      const txt = p.gateway === 'running' ? '● running' : '○ stopped';
+      return `<div class="stat-row"><span class="stat-label">${p.name}</span><span class="stat-value ${cls}">${txt}</span></div>`;
+    }).join('');
 
-      quickEl.innerHTML = `
-        <div class="card">
-          <div class="card-title">Quick Stats</div>
-          <div class="stat-row"><span class="stat-label">Agents</span><span class="stat-value">${profiles.length} total · ${running} running</span></div>
-          ${profilesHtml}
-        </div>
-        <div class="card">
-          <div class="card-title">Token Usage (7d)</div>
-          <div id="home-token-usage"><div class="loading">Loading...</div></div>
-        </div>
-      `;
-      // Fetch token usage
-      loadTokenUsage('home-token-usage', 7);
-    } else {
-      quickEl.innerHTML = `
-        <div class="card">
-          <div class="card-title">Quick Stats</div>
-          <div class="stat-row"><span class="stat-label">Agents</span><span class="stat-value">${healthRes.agents || 0}</span></div>
-        </div>
-        <div class="card">
-          <div class="card-title">Token Usage (7d)</div>
-          <div id="home-token-usage-2"><div class="loading">Loading...</div></div>
-        </div>
-      `;
-      loadTokenUsage('home-token-usage-2', 7);
-    }
+    bottomEl.innerHTML = `
+      <div class="card">
+        <div class="card-title">Gateways</div>
+        ${gwHtml || '<div class="stat-row"><span class="stat-label">No profiles</span></div>'}
+      </div>
+      <div class="card">
+        <div class="card-title">Quick Stats</div>
+        <div class="stat-row"><span class="stat-label">Version</span><span class="stat-value">${healthRes.hermes_version || 'N/A'}</span></div>
+        <div class="stat-row"><span class="stat-label">Agents</span><span class="stat-value">${profiles.length} total · ${running} running</span></div>
+        <div class="stat-row"><span class="stat-label">Sessions</span><span class="stat-value">${healthRes.sessions || 0}</span></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Token Usage (7d)</div>
+        <div id="home-token-usage"><div class="loading">Loading...</div></div>
+      </div>
+    `;
+    loadTokenUsage('home-token-usage', 7);
+
   } catch (e) {
     document.getElementById('home-cards').innerHTML = `<div class="card"><div class="card-title">Error</div><div class="error-msg">${e.message}</div></div>`;
   }
@@ -1170,89 +1165,121 @@ async function loadAgentMemory(container, name) {
   }
 }
 
-async function loadMonitor(container) {
+async function loadUsage(container) {
   container.innerHTML = `
     <div class="page-header">
       <div>
-        <div class="page-title">System Monitor</div>
-        <div class="page-subtitle">System resources and services</div>
+        <div class="page-title">Usage & Analytics</div>
+        <div class="page-subtitle">Token usage, costs, and activity breakdown</div>
       </div>
-      <button class="btn btn-ghost" onclick="loadMonitor(document.querySelector('.page.active'))">↻ Refresh</button>
+      <div style="display:flex;gap:8px;">
+        <select id="usage-days" class="log-level-select">
+          <option value="1">Today</option>
+          <option value="7" selected>7 days</option>
+          <option value="30">30 days</option>
+          <option value="90">90 days</option>
+        </select>
+        <select id="usage-agent" class="log-level-select">
+          <option value="">All agents</option>
+        </select>
+        <button class="btn btn-ghost" onclick="loadUsage(document.querySelector('.page.active'))">↻ Refresh</button>
+      </div>
     </div>
-    <div class="card-grid" id="monitor-resources">
-      <div class="card"><div class="card-title">CPU / RAM / Disk</div><div class="loading">Loading</div></div>
-      <div class="card"><div class="card-title">Services</div><div class="loading">Loading</div></div>
-      <div class="card"><div class="card-title">Gateways</div><div class="loading">Loading</div></div>
+    <div class="card-grid" id="usage-overview">
+      <div class="card"><div class="card-title">Overview</div><div class="loading">Loading</div></div>
+      <div class="card"><div class="card-title">Models</div><div class="loading">Loading</div></div>
+      <div class="card"><div class="card-title">Platforms</div><div class="loading">Loading</div></div>
     </div>
-    <div class="card-grid" style="margin-top:16px;" id="monitor-extras">
-      <div class="card"><div class="card-title">Cron Jobs</div><div class="loading">Loading</div></div>
-      <div class="card"><div class="card-title">Token Usage (30d)</div><div class="loading">Loading</div></div>
-      <div class="card"><div class="card-title">Errors</div><div class="loading">Loading</div></div>
+    <div class="card-grid" id="usage-tools" style="margin-top:16px;">
+      <div class="card"><div class="card-title">Top Tools</div><div class="loading">Loading</div></div>
     </div>
   `;
 
   try {
-    const [healthRes, profilesRes, agentRes, cronRes] = await Promise.all([
-      api('/api/system/health'),
-      api('/api/profiles'),
-      api('/api/agent/status'),
-      api('/api/cron/list', { method: 'POST', body: '{}' }),
-    ]);
+    // Load profiles for agent filter dropdown
+    const profilesRes = await api('/api/profiles');
+    const agentSelect = document.getElementById('usage-agent');
+    if (profilesRes.ok && profilesRes.profiles) {
+      profilesRes.profiles.forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = p.name;
+        opt.textContent = p.name;
+        agentSelect.appendChild(opt);
+      });
+    }
 
-    // Resources card
-    const resourcesEl = document.getElementById('monitor-resources');
-    resourcesEl.innerHTML = `
-      <div class="card">
-        <div class="card-title">Resources</div>
-        <div class="stat-row"><span class="stat-label">CPU</span><span class="stat-value">${healthRes.cpu || 'N/A'}</span></div>
-        <div class="stat-row"><span class="stat-label">RAM</span><span class="stat-value">${healthRes.ram || 'N/A'}</span></div>
-        <div class="stat-row"><span class="stat-label">Disk</span><span class="stat-value">${healthRes.disk || 'N/A'}</span></div>
-        <div class="stat-row"><span class="stat-label">Uptime</span><span class="stat-value">${healthRes.uptime || 'N/A'}</span></div>
-      </div>
-      <div class="card">
-        <div class="card-title">Hermes Services</div>
-        <div class="stat-row"><span class="stat-label">Agent</span><span class="stat-value">${agentRes.ok ? (agentRes.model || 'N/A') : 'N/A'} · ${agentRes.ok ? (agentRes.provider || '') : ''}</span></div>
-        <div class="stat-row"><span class="stat-label">Gateway</span><span class="stat-value ${agentRes.ok && agentRes.gatewayStatus?.includes('running') ? 'status-ok' : 'status-off'}">● ${agentRes.ok ? (agentRes.gatewayStatus || 'unknown') : 'N/A'}</span></div>
-        <div class="stat-row"><span class="stat-label">Terminal</span><span class="stat-value status-ok">● active</span></div>
-        <div class="stat-row"><span class="stat-label">Cron</span><span class="stat-value">${agentRes.ok ? `${agentRes.scheduledJobs || 0} jobs` : 'N/A'}</span></div>
-        <div class="stat-row"><span class="stat-label">Sessions</span><span class="stat-value">${agentRes.ok ? `${agentRes.activeSessions || 0} active` : 'N/A'}</span></div>
-      </div>
-      <div class="card">
-        <div class="card-title">Gateways</div>
-        ${profilesRes.ok && profilesRes.profiles ? profilesRes.profiles.map(p => `
-          <div class="stat-row">
-            <span class="stat-label">${p.name}</span>
-            <span class="stat-value ${p.gateway === 'running' ? 'status-ok' : 'status-off'}">${p.gateway === 'running' ? '● running' : '○ stopped'}</span>
-          </div>
-        `).join('') : '<div class="stat-row"><span class="stat-label">No profiles</span></div>'}
-      </div>
-    `;
+    // Fetch usage data
+    await fetchUsageData();
 
-    // Extras
-    const extrasEl = document.getElementById('monitor-extras');
-    const cronJobs = cronRes?.jobs || [];
-    const cronActive = cronJobs.filter(j => j.status === 'ACTIVE' || j.status === 'active').length;
-    extrasEl.innerHTML = `
-      <div class="card">
-        <div class="card-title">Cron Jobs</div>
-        <div class="stat-row"><span class="stat-label">Total</span><span class="stat-value">${cronJobs.length}</span></div>
-        <div class="stat-row"><span class="stat-label">Active</span><span class="stat-value ${cronActive > 0 ? 'status-ok' : ''}">${cronActive}</span></div>
-        <div class="stat-row"><span class="stat-label">Paused</span><span class="stat-value">${cronJobs.length - cronActive}</span></div>
-      </div>
-      <div class="card">
-        <div class="card-title">Token Usage (30d)</div>
-        <div id="monitor-token-usage"><div class="loading">Loading...</div></div>
-      </div>
-      <div class="card">
-        <div class="card-title">Errors</div>
-        <div class="stat-row"><span class="stat-label">Error count</span><span class="stat-value status-ok">0</span></div>
-      </div>
-    `;
-    loadTokenUsage('monitor-token-usage', 30);
+    // Bind filter change events
+    document.getElementById('usage-days')?.addEventListener('change', fetchUsageData);
+    document.getElementById('usage-agent')?.addEventListener('change', fetchUsageData);
 
   } catch (e) {
-    document.getElementById('monitor-resources').innerHTML = `<div class="card"><div class="card-title">Error</div><div class="error-msg">${e.message}</div></div>`;
+    document.getElementById('usage-overview').innerHTML = `<div class="card"><div class="card-title">Error</div><div class="error-msg">${e.message}</div></div>`;
   }
+}
+
+async function fetchUsageData() {
+  const days = document.getElementById('usage-days')?.value || '7';
+  const agent = document.getElementById('usage-agent')?.value || '';
+  const query = agent ? `?profile=${agent}` : '';
+  const res = await api(`/api/usage/${days}${query}`);
+
+  if (!res.ok) {
+    document.getElementById('usage-overview').innerHTML = `<div class="card"><div class="card-title">Error</div><div class="error-msg">${res.error || 'Failed to load'}</div></div>`;
+    return;
+  }
+
+  const d = res;
+
+  // Overview card
+  const overviewEl = document.getElementById('usage-overview');
+  overviewEl.innerHTML = `
+    <div class="card">
+      <div class="card-title">Overview ${d.period ? '(' + d.period + ')' : ''}</div>
+      <div class="stat-row"><span class="stat-label">Sessions</span><span class="stat-value">${d.sessions}</span></div>
+      <div class="stat-row"><span class="stat-label">Messages</span><span class="stat-value">${(d.messages || 0).toLocaleString()}</span></div>
+      <div class="stat-row"><span class="stat-label">Input tokens</span><span class="stat-value">${formatNumber(d.inputTokens)}</span></div>
+      <div class="stat-row"><span class="stat-label">Output tokens</span><span class="stat-value">${formatNumber(d.outputTokens)}</span></div>
+      <div class="stat-row"><span class="stat-label">Total tokens</span><span class="stat-value">${formatNumber(d.totalTokens)}</span></div>
+      <div class="stat-row"><span class="stat-label">Est. cost</span><span class="stat-value">${d.cost || '$0.00'}</span></div>
+      <div class="stat-row"><span class="stat-label">Active time</span><span class="stat-value">${d.activeTime || '—'}</span></div>
+      <div class="stat-row"><span class="stat-label">Avg session</span><span class="stat-value">${d.avgSession || '—'}</span></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Models</div>
+      ${d.models && d.models.length > 0 ? d.models.map(m => `
+        <div class="stat-row">
+          <span class="stat-label">${m.name}</span>
+          <span class="stat-value">${m.sessions} sess · ${m.tokens} tokens</span>
+        </div>
+      `).join('') : '<div class="stat-row"><span class="stat-label">No data</span></div>'}
+    </div>
+    <div class="card">
+      <div class="card-title">Platforms</div>
+      ${d.platforms && d.platforms.length > 0 ? d.platforms.map(p => `
+        <div class="stat-row">
+          <span class="stat-label">${p.name}</span>
+          <span class="stat-value">${p.sessions} sess · ${p.tokens} tokens</span>
+        </div>
+      `).join('') : '<div class="stat-row"><span class="stat-label">No data</span></div>'}
+    </div>
+  `;
+
+  // Top Tools card
+  const toolsEl = document.getElementById('usage-tools');
+  toolsEl.innerHTML = `
+    <div class="card">
+      <div class="card-title">Top Tools</div>
+      ${d.topTools && d.topTools.length > 0 ? d.topTools.map(t => `
+        <div class="stat-row">
+          <span class="stat-label">${t.name}</span>
+          <span class="stat-value">${t.calls} calls (${t.pct})</span>
+        </div>
+      `).join('') : '<div class="stat-row"><span class="stat-label">No data</span></div>'}
+    </div>
+  `;
 }
 
 async function loadSkills(container) {
@@ -1350,7 +1377,7 @@ async function loadMaintenance(container) {
           <button class="btn btn-ghost" onclick="runDoctor()">Run Diagnose</button>
           <button class="btn btn-ghost" onclick="runDoctor(true)">Auto-fix</button>
         </div>
-        <div id="doctor-result" style="margin-top:8px;"></div>
+        <div id="doctor-result" style="margin-top:8px;max-height:500px;overflow-y:auto;"></div>
       </div>
       <div class="card">
         <div class="card-title">Dump</div>
@@ -1494,6 +1521,87 @@ async function loadAudit() {
   }
 }
 
+function parseDoctorOutput(raw) {
+  const lines = raw.split(/\r?\n/);
+  const sections = [];
+  let current = null;
+  let totalPass = 0, totalFail = 0, totalWarn = 0;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    // Skip header box
+    if (/^[┌└─│┐┘]+$/.test(trimmed)) continue;
+    if (/🩺/.test(trimmed)) continue;
+    // Empty line flushes current section
+    if (!trimmed) { if (current && current.items.length) { sections.push(current); current = null; } continue; }
+    // Section header: ◆ Name
+    const secMatch = trimmed.match(/^◆\s+(.+)/);
+    if (secMatch) {
+      if (current && current.items.length) sections.push(current);
+      current = { name: secMatch[1], items: [] };
+      continue;
+    }
+    if (!current) continue;
+    // Item: ✓ pass, ✗ fail, ⚠ warning
+    const itemMatch = trimmed.match(/^([✓✗⚠])\s+(.+)/);
+    if (itemMatch) {
+      const status = itemMatch[1] === '✓' ? 'pass' : itemMatch[1] === '✗' ? 'fail' : 'warn';
+      if (status === 'pass') totalPass++;
+      else if (status === 'fail') totalFail++;
+      else totalWarn++;
+      current.items.push({ status, text: itemMatch[2], suggestion: null });
+      continue;
+    }
+    // Suggestion: → text
+    const sugMatch = trimmed.match(/^→\s+(.+)/);
+    if (sugMatch && current.items.length) {
+      current.items[current.items.length - 1].suggestion = sugMatch[1];
+      continue;
+    }
+  }
+  if (current && current.items.length) sections.push(current);
+  return { sections, totalPass, totalFail, totalWarn };
+}
+
+function renderDoctorOutput(raw) {
+  const { sections, totalPass, totalFail, totalWarn } = parseDoctorOutput(raw);
+  const total = totalPass + totalFail + totalWarn;
+  if (!sections.length) return `<pre style="font-size:11px;white-space:pre-wrap;color:var(--fg-muted);">${escapeHtml(raw)}</pre>`;
+
+  const statusIcon = (s) => s === 'pass' ? '✓' : s === 'fail' ? '✗' : '⚠';
+  const statusClass = (s) => s === 'pass' ? 'doctor-pass' : s === 'fail' ? 'doctor-fail' : 'doctor-warn';
+
+  let html = '';
+
+  // Summary bar
+  html += `<div class="doctor-summary">`;
+  html += `<div class="doctor-summary-item doctor-pass"><span class="doctor-dot"></span>${totalPass} passed</div>`;
+  if (totalWarn) html += `<div class="doctor-summary-item doctor-warn"><span class="doctor-dot"></span>${totalWarn} warnings</div>`;
+  if (totalFail) html += `<div class="doctor-summary-item doctor-fail"><span class="doctor-dot"></span>${totalFail} failed</div>`;
+  html += `<div class="doctor-summary-total">${total} checks</div>`;
+  html += `</div>`;
+
+  // Sections
+  for (const sec of sections) {
+    const hasFail = sec.items.some(i => i.status === 'fail');
+    const hasWarn = sec.items.some(i => i.status === 'warn');
+    const secStatus = hasFail ? 'fail' : hasWarn ? 'warn' : 'pass';
+    html += `<div class="doctor-section ${statusClass(secStatus)}">`;
+    html += `<div class="doctor-section-header"><span class="doctor-dot"></span>${escapeHtml(sec.name)}</div>`;
+    for (const item of sec.items) {
+      html += `<div class="doctor-item">`;
+      html += `<span class="doctor-item-icon ${statusClass(item.status)}">${statusIcon(item.status)}</span>`;
+      html += `<span class="doctor-item-text">${escapeHtml(item.text)}</span>`;
+      html += `</div>`;
+      if (item.suggestion) {
+        html += `<div class="doctor-suggestion">→ ${escapeHtml(item.suggestion)}</div>`;
+      }
+    }
+    html += `</div>`;
+  }
+  return html;
+}
+
 async function runDoctor(fix = false) {
   const el = document.getElementById('doctor-result');
   el.innerHTML = '<div class="loading">Running diagnostics...</div>';
@@ -1505,18 +1613,12 @@ async function runDoctor(fix = false) {
       body: JSON.stringify({ fix }),
     });
     if (res.ok && res.output) {
-      // Style the output
-      const styled = escapeHtml(res.output)
-        .replace(/✓/g, '<span style="color:var(--green);">✓</span>')
-        .replace(/✗/g, '<span style="color:var(--red);">✗</span>')
-        .replace(/◆/g, '<span style="color:var(--yellow);">◆</span>')
-        .replace(/(🩺.*?)(?=<)/g, '<strong style="color:var(--fg);">$1</strong>');
-      el.innerHTML = `<div style="font-size:11px;line-height:1.8;max-height:400px;overflow-y:auto;padding:8px;">${styled}</div>`;
+      el.innerHTML = renderDoctorOutput(res.output);
     } else {
-      el.innerHTML = `<div class="error-msg">${res.output || 'No output'}</div>`;
+      el.innerHTML = `<div class="error-msg">${escapeHtml(res.output || 'No output')}</div>`;
     }
   } catch (e) {
-    el.innerHTML = `<div class="error-msg">${e.message}</div>`;
+    el.innerHTML = `<div class="error-msg">${escapeHtml(e.message)}</div>`;
   }
 }
 
@@ -1535,6 +1637,9 @@ async function runUpdate() {
   if (!await customConfirm('Update Hermes? This may take a minute.')) return;
   const el = document.getElementById('update-result');
   el.innerHTML = '<div class="loading">Updating...</div>';
+  // Pause notification polling during update to avoid false network errors
+  const wasPolling = state.notifInterval;
+  if (state.notifInterval) { clearInterval(state.notifInterval); state.notifInterval = null; }
   try {
     const csrfToken = state.csrfToken || '';
     const res = await api('/api/update', {
@@ -1542,9 +1647,12 @@ async function runUpdate() {
       headers: { 'X-CSRF-Token': csrfToken },
     });
     el.innerHTML = `<pre style="font-size:11px;white-space:pre-wrap;color:var(--fg-muted);">${escapeHtml(res.output || 'Update started')}</pre>`;
-    showToast('Hermes update started', 'success');
+    showToast('Hermes update complete', 'success');
   } catch (e) {
-    el.innerHTML = `<div class="error-msg">${e.message}</div>`;
+    el.innerHTML = `<div class="error-msg">${escapeHtml(e.message)}</div>`;
+  } finally {
+    // Resume polling after update
+    if (wasPolling) startNotifPolling();
   }
 }
 
@@ -2000,4 +2108,12 @@ Object.assign(window, {
 });
 
 // Start
+// Expose for onclick handlers in templates
+window.loadUsage = loadUsage;
+window.fetchUsageData = fetchUsageData;
+window.resumeSession = resumeSession;
+window.openTerminalPanel = openTerminalPanel;
+window.loadHome = loadHome;
+window.loadAgentDetail = loadAgentDetail;
+
 init();
