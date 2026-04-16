@@ -261,13 +261,15 @@ async function loadChat(container) {
       #chat-input { flex: 1; resize: none; max-height: 120px; padding: 10px 14px; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius); color: var(--fg); font-family: var(--font); font-size: 13px; outline: none; }
       #chat-input:focus { border-color: var(--fg); }
       .chat-sidebar-backdrop { display: none; position: fixed; inset: 56px 0 0 0; background: rgba(0,0,0,0.5); z-index: 99; }
-      .chat-sidebar-toggle { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; background: transparent; border: 1px solid var(--border); border-radius: var(--radius); color: var(--fg); cursor: pointer; }
+      .chat-sidebar-toggle { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; background: transparent; border: 1px solid var(--border); border-radius: var(--radius); color: var(--fg); cursor: pointer; z-index: 101; }
       .chat-sidebar-toggle:hover { background: var(--bg-input); }
+      .icon-btn { padding: 0; background: transparent; border: none; color: var(--fg); cursor: pointer; border-radius: var(--radius); }
       @media (max-width: 768px) {
         .chat-sidebar { position: fixed; left: 0; top: 56px; height: calc(100vh - 56px); z-index: 100; }
         .chat-sidebar.collapsed { transform: translateX(-100%); }
         .chat-sidebar-backdrop.active { display: block; }
         .chat-layout { margin: -16px; }
+        .chat-header { position: relative; z-index: 102; }
       }
     </style>
     <div class="chat-layout">
@@ -341,8 +343,8 @@ async function loadChat(container) {
     });
   }
 
-  // Mobile: auto-close sidebar
-  if (window.innerWidth <= 768) {
+  // Mobile: auto-close sidebar on first load (if no saved state)
+  if (window.innerWidth <= 768 && localStorage.getItem('hci-chat-sidebar') === null) {
     const sidebar = document.getElementById('chat-sidebar');
     if (sidebar) sidebar.classList.add('collapsed');
     state.chatSidebarOpen = false;
