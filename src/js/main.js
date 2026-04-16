@@ -297,7 +297,10 @@ async function loadChatSession(sessionId) {
   const profile = document.getElementById('chat-profile')?.value || 'default';
   const container = document.getElementById('chat-messages');
   const n = document.getElementById('chat-title');
+  const stats = document.getElementById('chat-status-session');
   if (!container) return;
+  state._currentChatSession = sessionId || 0;
+  if (stats) stats.textContent = sessionId || '—';
   container.innerHTML = '<div class="loading">Loading messages</div>';
   try {
     const r = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/messages?profile=${encodeURIComponent(profile)}`, { credentials: 'include' });
@@ -359,9 +362,11 @@ function Fu(p, t) {
 async function newChatSession() {
   const container = document.getElementById('page-chat');
   if (!container) return;
-  container.querySelectorAll('.session-item')?.forEach(el => el.remove());
+  state._currentChatSession = 0;
   const chatHeader = document.getElementById('chat-header');
   if (chatHeader) chatHeader.querySelector('.chat-title').textContent = 'New Chat';
+  const stats = document.getElementById('chat-status-session');
+  if (stats) stats.textContent = '—';
   const messages = document.getElementById('chat-messages');
   if (messages) messages.innerHTML = '<div style="text-align:center;color:var(--fg-subtle);padding:60px 20px;"><div style="font-size:24px;margin-bottom:12px;">💬</div><div style="font-size:14px;margin-bottom:4px;">New conversation</div><div style="font-size:12px;">Type a message to start</div></div>';
 }
@@ -397,6 +402,7 @@ async function sendChatMessage() {
   if (!text) return;
   const profile = document.getElementById('chat-profile')?.value || 'default';
   const model = document.getElementById('chat-model')?.value || '';
+  const sessionId = state._currentChatSession || 0;
   input.value = '';
   input.style.height = 'auto';
   state._chatLock = true;
@@ -413,49 +419,77 @@ async function sendChatMessage() {
   streamEl.style.cssText = 'margin-bottom:8px;padding:10px 12px;border-radius:8px;background:var(--bg-card);border-left:3px solid var(--green, #4ade80);';
   streamEl.innerHTML = '<div style="font-size:10px;color:var(--fg-subtle);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">assistant</div><div id="chat-stream-content" style="font-size:13px;line-height:1.6;white-space:pre-wrap;word-break:break-word;color:var(--fg);"><span class="chat-cursor" style="animation:blink 1s infinite;">▊</span></div>';
   if (messagesDiv) messagesDiv.appendChild(streamEl);
+  if (messagesDiv) messagesDiv.scrollTop = messagesDiv.scrollHeight;
   const contentDiv = streamEl.querySelector('#chat-stream-content');
   let fullContent = '';
   let startTime = Date.now();
   try {
-    const body = JSON.stringify({ message: text, profile, sessionId: 0, model });
+    const body = JSON.stringify({ message: text, profile, sessionId, model });
     const response = await fetch('/api/chat/send', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': state.csrfToken || '' }, credentials: 'include', body });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
+    let buffer = '';
     let done = false;
     while (!done) {
       const { done: d, value } = await reader.read();
       if (d) { done = true; break; }
-      fullContent += decoder.decode(value, { stream: true });
-      const lines = fullContent.split('\n[ERROR] ');
-      contentDiv.innerHTML = Z(lines[0]);
-      if (lines.length > 1) {
-        const lastLine = lines[lines.length - 1];
-        const match = lastLine.match(/^(.+?)\n\n$/);
-        if (match) {
-          fullContent = match[1];
-          contentDiv.innerHTML = Z(fullContent);
-        }
+      buffer += decoder.decode(value, { stream: true });
+      // Parse SSE data: lines
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        try {
+          const evt = JSON.parse(line.slice(6));
+          if (evt.type === 'token') {
+            fullContent += evt.content;
+            contentDiv.innerHTML = renderChatContent(fullContent) + '<span class="chat-cursor" style="animation:blink 1s infinite;">▊</span>';
+            if (messagesDiv) messagesDiv.scrollTop = messagesDiv.scrollHeight;
+          } else if (evt.type === 'done') {
+            if (evt.sessionId) state._currentChatSession = evt.sessionId;
+          } else if (evt.type === 'error') {
+            fullContent += '\n[Error: ' + evt.content + ']';
+          }
+        } catch {}
       }
+    }
+    // Process remaining buffer
+    if (buffer.startsWith('data: ')) {
+      try {
+        const evt = JSON.parse(buffer.slice(6));
+        if (evt.type === 'token') fullContent += evt.content;
+        if (evt.type === 'done' && evt.sessionId) state._currentChatSession = evt.sessionId;
+      } catch {}
     }
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     if (contentDiv) {
-      contentDiv.innerHTML = Z(fullContent) + '<div style="font-size:10px;color:var(--fg-subtle);margin-top:8px;">Elapsed: ' + elapsed + 's</div>';
-      const cursor = contentDiv.querySelector('.chat-cursor');
-      if (cursor) cursor.remove();
+      contentDiv.innerHTML = renderChatContent(fullContent) + '<div style="font-size:10px;color:var(--fg-subtle);margin-top:8px;">' + elapsed + 's</div>';
     }
-    const profileSel = document.getElementById('chat-profile');
-    if (profileSel && profileSel.value === '') profileSel.value = 0;
     const stats = document.getElementById('chat-status-session');
     const elapsedEl = document.getElementById('chat-status-elapsed');
-    if (stats) stats.textContent = 0;
+    if (stats) stats.textContent = state._currentChatSession || '—';
     if (elapsedEl) elapsedEl.textContent = elapsed + 's';
+    // Refresh sidebar to show new session
+    loadChatSidebar();
   } catch (e) {
-    if (contentDiv) contentDiv.innerHTML = Z(fullContent) + '<div style="color:var(--red);margin-top:8px;">Error: ' + Z(e.message) + '</div>';
+    if (contentDiv) contentDiv.innerHTML = renderChatContent(fullContent) + '<div style="color:var(--red);margin-top:8px;">Error: ' + escapeHtml(e.message) + '</div>';
   } finally {
     state._chatLock = false;
     if (btn) { btn.disabled = false; btn.textContent = 'Send'; }
   }
+}
+
+function renderChatContent(text) {
+  // Simple markdown-like rendering: code blocks, bold, line breaks
+  let html = escapeHtml(text);
+  // Code blocks ```...```
+  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre style="background:var(--bg-panel);padding:8px;border-radius:4px;overflow-x:auto;font-size:12px;margin:6px 0;"><code>$2</code></pre>');
+  // Inline code
+  html = html.replace(/`([^`]+)`/g, '<code style="background:var(--bg-panel);padding:1px 4px;border-radius:3px;font-size:12px;">$1</code>');
+  // Bold
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  return html;
 }
 
 function createMessageDiv(role, content) {
