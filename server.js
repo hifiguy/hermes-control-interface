@@ -272,7 +272,7 @@ const events = [];
 // No in-memory chat sessions — sidebar shows actual hermes sessions
 // Sending a message uses --resume with the real hermes session ID
 
-app.post('/api/chat/send', requireAuth, requirePerm('sessions.messages'), async (req, res) => {
+app.post('/api/chat/send', requireAuth, requirePerm('chat.use'), async (req, res) => {
   const { message, profile, sessionId, model } = req.body || {};
   if (!message || typeof message !== 'string') return res.status(400).json({ error: 'message required' });
 
@@ -1812,7 +1812,7 @@ app.get('/api/profiles', requireAuth, async (req, res) => {
   res.json({ ok: true, profiles });
 });
 
-app.post('/api/profiles/use', requireCsrf, async (req, res) => {
+app.post('/api/profiles/use', requireRole('admin'), async (req, res) => {
   const name = sanitizeProfileName(req.body?.profile);
   if (!name) return res.status(400).json({ error: 'invalid profile name (allowed: a-z, A-Z, 0-9, _, -)' });
   try {
@@ -1955,7 +1955,7 @@ app.get('/api/gateway/:profile/logs', requireAuth, async (req, res) => {
 });
 
 // Unified Logs — all profiles, all sources, with filters
-app.get('/api/logs', requireAuth, async (req, res) => {
+app.get('/api/logs', requireAuth, requirePerm('logs.view'), async (req, res) => {
   try {
     const profile = String(req.query.profile || 'all');
     const source = String(req.query.source || 'all'); // agent, error, gateway
@@ -2156,7 +2156,7 @@ app.post('/api/terminal/ensure', requireAuth, (req, res) => {
   }
 });
 
-app.post('/api/terminal/exec', requireCsrf, async (req, res) => {
+app.post('/api/terminal/exec', requireAuth, requireCsrf, requirePerm('terminal.exec'), async (req, res) => {
   const command = String(req.body?.command || '').trim();
   if (!command) return res.status(400).json({ error: 'command required' });
   if (command.length > 4096) return res.status(400).json({ error: 'command too long (max 4096 chars)' });
@@ -2194,7 +2194,7 @@ app.post('/api/terminal/exec', requireCsrf, async (req, res) => {
   }
 });
 
-app.post('/api/chat', requireCsrf, async (req, res) => {
+app.post('/api/chat', requireAuth, requireCsrf, requirePerm('chat.use'), async (req, res) => {
   const { message, sessionId = 'control-ui' } = req.body || {};
   if (!message || typeof message !== 'string') return res.status(400).json({ error: 'message required' });
   const history = sessions.get(sessionId) || [];
@@ -2244,7 +2244,7 @@ function addCronJob({ schedule, note, source = '/cron add' }) {
   return job;
 }
 
-app.post('/api/cron/:action', requireCsrf, async (req, res) => {
+app.post('/api/cron/:action', requireAuth, requireCsrf, requirePerm('cron.manage'), async (req, res) => {
   try {
     const result = await handleCronAction(req.params.action, req.body || {}, req.query || {}, '/api/cron');
     return res.json(result);
@@ -2269,11 +2269,11 @@ app.get('/usage', requireAuth, (req, res) => {
   res.json(buildUsageSummary());
 });
 
-app.get('/api/usage', requireAuth, (req, res) => {
+app.get('/api/usage', requireAuth, requirePerm('usage.view'), (req, res) => {
   res.json(buildUsageSummary());
 });
 
-app.get('/api/insights', requireAuth, async (req, res) => {
+app.get('/api/insights', requireAuth, requirePerm('usage.view'), async (req, res) => {
   const days = Math.min(365, Math.max(1, parseInt(req.query.days) || 7));
   const source = String(req.query.source || '').trim();
   const data = await getInsights(days, source);
@@ -3136,7 +3136,7 @@ app.get('/api/sessions/stats', requireAuth, async (req, res) => {
 });
 
 // Token usage / insights
-app.get('/api/usage/:days', requireAuth, async (req, res) => {
+app.get('/api/usage/:days', requireAuth, requirePerm('usage.view'), async (req, res) => {
   try {
     const days = Math.min(parseInt(req.params.days || '7', 10), 90);
     const profile = sanitizeProfileName(req.query.profile) || undefined;
@@ -3272,7 +3272,7 @@ function parseInsights(raw) {
 }
 
 // Daily usage breakdown (for charts) — queries state.db directly
-app.get('/api/usage/daily/:days', requireAuth, async (req, res) => {
+app.get('/api/usage/daily/:days', requireAuth, requirePerm('usage.view'), async (req, res) => {
   try {
     const days = Math.min(parseInt(req.params.days || '7', 10), 90);
     const profile = sanitizeProfileName(req.query.profile);
@@ -3440,7 +3440,7 @@ app.delete('/api/profiles/:name', requireRole('admin'), async (req, res) => {
 });
 
 // Agent insights (per profile)
-app.get('/api/insights/:profile/:days', requireAuth, async (req, res) => {
+app.get('/api/insights/:profile/:days', requireAuth, requirePerm('usage.view'), async (req, res) => {
   try {
     const profile = sanitizeProfileName(req.params.profile);
     if (!profile) return res.status(400).json({ ok: false, error: 'invalid profile name' });

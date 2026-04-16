@@ -3233,9 +3233,9 @@ async function showCreateUser() {
         <div style="margin-bottom:10px;">
           <label style="font-size:11px;color:var(--fg-muted);display:block;margin-bottom:6px;">Role</label>
           <div style="display:flex;gap:6px;margin-bottom:10px;">
-            <button type="button" class="btn btn-ghost btn-sm" id="role-admin-btn" onclick="this.closest('form').querySelector('[name=role]').value='admin';document.getElementById('perm-custom-list').style.display='none'">Admin</button>
-            <button type="button" class="btn btn-ghost btn-sm" id="role-viewer-btn" onclick="this.closest('form').querySelector('[name=role]').value='viewer';document.getElementById('perm-custom-list').style.display='none'">Viewer</button>
-            <button type="button" class="btn btn-ghost btn-sm" id="role-custom-btn" onclick="this.closest('form').querySelector('[name=role]').value='custom';document.getElementById('perm-custom-list').style.display='block'">Custom</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="role-admin-btn" onclick="applyCreatePreset('admin', this)">Admin</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="role-viewer-btn" onclick="applyCreatePreset('viewer', this)">Viewer</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="role-custom-btn" onclick="applyCreatePreset('custom', this)">Custom</button>
           </div>
           <input type="hidden" name="role" value="viewer" />
           <div id="perm-custom-list" style="display:none;">
@@ -3255,6 +3255,30 @@ async function showCreateUser() {
     </div>
   `;
   document.body.appendChild(overlay);
+
+  // Apply preset for create user modal
+  window.applyCreatePreset = function(role, btn) {
+    form.querySelector('[name=role]').value = role;
+    const customList = document.getElementById('perm-custom-list');
+    const checkboxes = customList.querySelectorAll('input[name="perm"]');
+    if (role === 'admin') {
+      checkboxes.forEach(cb => cb.checked = true);
+      customList.style.display = 'none';
+    } else if (role === 'viewer') {
+      const viewerPerms = ['sessions.view','sessions.messages','chat.use','logs.view','usage.view','skills.browse','files.read'];
+      checkboxes.forEach(cb => cb.checked = viewerPerms.includes(cb.value));
+      customList.style.display = 'none';
+    } else {
+      customList.style.display = 'block';
+    }
+    // Highlight active button
+    form.querySelectorAll('[onclick^="applyCreatePreset"]').forEach(b => b.classList.remove('btn-primary'));
+    btn.classList.add('btn-primary');
+  };
+
+  // Set default viewer preset as active
+  const viewerBtn = document.getElementById('role-viewer-btn');
+  if (viewerBtn) viewerBtn.classList.add('btn-primary');
 
   // Password match check
   const form = overlay.querySelector('#create-user-form');
@@ -4469,6 +4493,7 @@ window.setLogsMode = setLogsMode;
 window.debounceLogsSearch = debounceLogsSearch;
 window.showCreateUser = showCreateUser;
 window.showEditUser = showEditUser;
+window.showResetPassword = showResetPassword;
 window.togglePwVis = function(btn) {
   const input = btn.previousElementSibling;
   if (input.type === 'password') { input.type = 'text'; btn.textContent = '🙈'; }
