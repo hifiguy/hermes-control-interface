@@ -3080,7 +3080,6 @@ window.togglePwVis = function(btn) {
   if (input.type === 'password') { input.type = 'text'; btn.textContent = '🙈'; }
   else { input.type = 'password'; btn.textContent = '👁'; }
 };
-window.applyPreset = applyPreset;
 window.sendChatMessage = sendChatMessage;
 window.loadChatSession = loadChatSession;
 window.loadChatSidebar = loadChatSidebar;
