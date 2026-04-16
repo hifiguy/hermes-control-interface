@@ -241,7 +241,7 @@ function findPluginManifests() {
 }
 
 // List plugins API
-app.get('/api/plugins', requireAuth, (req, res) => {
+app.get('/api/plugins', requireRole('admin'), (req, res) => {
   const plugins = findPluginManifests().map(p => ({
     id: p.id,
     name: p.name,

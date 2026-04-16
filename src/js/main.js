@@ -824,11 +824,11 @@ async function loadHCIPanel() {
 
     el.innerHTML = `
       <div class="card-title">HCI</div>
-      <div class="stat-row"><span class="stat-label">Version</span><span class="stat-value">${hciVersion}</span></div>
-      <div class="stat-row"><span class="stat-label">Hermes</span><span class="stat-value">${hermesVersion}</span></div>
-      <div class="stat-row"><span class="stat-label">Node</span><span class="stat-value">${nodeVersion}</span></div>
-      <div class="stat-row"><span class="stat-label">CPU</span><span class="stat-value">${cpu}%</span></div>
-      <div class="stat-row"><span class="stat-label">RAM</span><span class="stat-value">${ram}</span></div>
+      <div class="stat-row"><span class="stat-label">Version</span><span class="stat-value">${escapeHtml(hciVersion)}</span></div>
+      <div class="stat-row"><span class="stat-label">Hermes</span><span class="stat-value">${escapeHtml(hermesVersion)}</span></div>
+      <div class="stat-row"><span class="stat-label">Node</span><span class="stat-value">${escapeHtml(nodeVersion)}</span></div>
+      <div class="stat-row"><span class="stat-label">CPU</span><span class="stat-value">${escapeHtml(cpu)}%</span></div>
+      <div class="stat-row"><span class="stat-label">RAM</span><span class="stat-value">${escapeHtml(ram)}</span></div>
       <div class="stat-row"><span class="stat-label">Status</span><span class="stat-value ${isHealthy ? 'status-ok' : 'status-off'}">${isHealthy ? '● Healthy' : '○ Error'}</span></div>
       <div style="display:flex;gap:6px;margin-top:12px;flex-wrap:wrap;">
         <button class="btn btn-ghost btn-sm" onclick="hcirestart()">⟲ Restart</button>
