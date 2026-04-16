@@ -2476,7 +2476,56 @@ app.put('/api/config/:profile', requireAuth, requireRole('admin'), async (req, r
   }
 });
 
-// Keys (secrets) — list keys from .env
+// Key metadata: category, description, provider URL, advanced flag
+const KEY_METADATA = {
+  // LLM Providers
+  OPENROUTER_API_KEY:      { cat: 'LLM Providers',    desc: 'OpenRouter API key',           url: 'https://openrouter.ai/keys',       adv: false },
+  OPENAI_API_KEY:          { cat: 'LLM Providers',    desc: 'OpenAI API key',               url: 'https://platform.openai.com/api-keys', adv: false },
+  ANTHROPIC_API_KEY:       { cat: 'LLM Providers',    desc: 'Anthropic API key',            url: 'https://console.anthropic.com/settings/keys', adv: false },
+  DEEPSEEK_API_KEY:        { cat: 'LLM Providers',    desc: 'DeepSeek API key',              url: 'https://platform.deepseek.com/api-keys', adv: false },
+  GEMINI_API_KEY:          { cat: 'LLM Providers',    desc: 'Google Gemini API key',         url: 'https://aistudio.google.com/app/apikey', adv: false },
+  GROQ_API_KEY:            { cat: 'LLM Providers',    desc: 'Groq API key',                  url: 'https://console.groq.com/keys',     adv: false },
+  MISTRAL_API_KEY:         { cat: 'LLM Providers',    desc: 'Mistral API key',               url: 'https://console.mistral.ai/api/',    adv: false },
+  TOGETHER_API_KEY:        { cat: 'LLM Providers',    desc: 'Together AI API key',           url: 'https://api.together.xyz/settings/api-keys', adv: false },
+  OPENAI_BASE_URL:         { cat: 'LLM Providers',    desc: 'OpenAI-compatible base URL',    url: '',  adv: false },
+  ANTHROPIC_BASE_URL:      { cat: 'LLM Providers',    desc: 'Anthropic base URL',            url: '',  adv: true },
+  DEEPSEEK_BASE_URL:       { cat: 'LLM Providers',    desc: 'DeepSeek base URL',             url: '',  adv: true },
+  LLM_MODEL:               { cat: 'LLM Providers',    desc: 'Default LLM model',             url: '',  adv: false },
+  LLM_PROVIDER:            { cat: 'LLM Providers',    desc: 'Default LLM provider',          url: '',  adv: false },
+  // Tool APIs
+  BROWSERBASE_API_KEY:     { cat: 'Tool APIs',        desc: 'Browserbase API key (web scraping)', url: 'https://browserbase.com',  adv: false },
+  BROWSERBASE_API_SECRET:  { cat: 'Tool APIs',        desc: 'Browserbase API secret',         url: 'https://browserbase.com',  adv: true },
+  FIRECRAWL_API_KEY:       { cat: 'Tool APIs',        desc: 'Firecrawl API key (web scraping)', url: 'https://firecrawl.dev', adv: false },
+  TAVILY_API_KEY:          { cat: 'Tool APIs',        desc: 'Tavily API key (web search)',   url: 'https://app.tavily.com',    adv: false },
+  ELEVENLABS_API_KEY:      { cat: 'Tool APIs',        desc: 'ElevenLabs API key (TTS)',     url: 'https://elevenlabs.io/api',  adv: false },
+  HUGGINGFACE_API_KEY:     { cat: 'Tool APIs',        desc: 'HuggingFace API key',          url: 'https://huggingface.co/settings/inference', adv: false },
+  // Messaging Platforms
+  TELEGRAM_BOT_TOKEN:      { cat: 'Messaging Platforms', desc: 'Telegram bot token',         url: 'https://t.me/BotFather',    adv: false },
+  DISCORD_BOT_TOKEN:       { cat: 'Messaging Platforms', desc: 'Discord bot token',           url: 'https://discord.com/developers/applications', adv: false },
+  SLACK_BOT_TOKEN:         { cat: 'Messaging Platforms', desc: 'Slack bot token (xoxb)',      url: 'https://api.slack.com/apps', adv: false },
+  WHATSAPP_SESSION_PATH:   { cat: 'Messaging Platforms', desc: 'WhatsApp session file path', url: '',  adv: false },
+  // Agent Settings
+  HERMES_CONTROL_PASSWORD:  { cat: 'Agent Settings',   desc: 'HCI control password',         url: '',  adv: false },
+  HERMES_CONTROL_SECRET:   { cat: 'Agent Settings',   desc: 'HCI control secret',           url: '',  adv: true },
+  API_SERVER_ENABLED:      { cat: 'Agent Settings',   desc: 'Enable API server',             url: '',  adv: false },
+  API_SERVER_PORT:         { cat: 'Agent Settings',   desc: 'API server port',               url: '',  adv: true },
+  WEBHOOK_SECRET:          { cat: 'Agent Settings',   desc: 'Webhook verification secret',   url: '',  adv: true },
+  // MCP Keys (match by prefix)
+  _MCP_KEYS_PREFIX: ['MCP_'],
+};
+
+function getKeyMeta(name) {
+  if (KEY_METADATA[name]) return KEY_METADATA[name];
+  // Prefix matching for MCP_*
+  if (name.startsWith('MCP_')) return { cat: 'MCP Keys', desc: `MCP configuration: ${name}`, url: '', adv: true };
+  // If it looks like an API key
+  if (/_API_KEY$|_KEY$|_TOKEN$|_SECRET$|_PASSWORD$/i.test(name)) {
+    return { cat: 'Advanced', desc: name, url: '', adv: true };
+  }
+  return { cat: 'Advanced', desc: name, url: '', adv: true };
+}
+
+// Keys (secrets) — list keys from .env with category metadata
 app.get('/api/keys/:profile', requireAuth, async (req, res) => {
   try {
     const profile = sanitizeProfileName(req.params.profile);
@@ -2485,7 +2534,7 @@ app.get('/api/keys/:profile', requireAuth, async (req, res) => {
     const envPath = `${home}/.env`;
     const raw = await shell(`cat "${envPath}" 2>/dev/null || echo ""`);
     if (!raw.trim()) {
-      return res.json({ ok: true, keys: [] });
+      return res.json({ ok: true, keys: [], categories: [] });
     }
     const keys = [];
     for (const line of raw.split('\n')) {
@@ -2498,9 +2547,26 @@ app.get('/api/keys/:profile', requireAuth, async (req, res) => {
       const masked = value.length > 4
         ? value.substring(0, 2) + '•'.repeat(Math.min(value.length - 4, 20)) + value.substring(value.length - 2)
         : '•'.repeat(value.length);
-      keys.push({ name, masked, has_value: value.length > 0 });
+      const meta = getKeyMeta(name);
+      keys.push({ name, masked, has_value: value.length > 0, category: meta.cat, description: meta.desc, provider_url: meta.url, is_advanced: meta.adv });
     }
-    res.json({ ok: true, keys });
+
+    // Group by category
+    const cats = {};
+    const catOrder = ['LLM Providers', 'Tool APIs', 'Messaging Platforms', 'Agent Settings', 'MCP Keys', 'Advanced'];
+    keys.forEach(k => {
+      if (!cats[k.category]) cats[k.category] = [];
+      cats[k.category].push(k);
+    });
+    const categories = catOrder.filter(c => cats[c]).map(c => ({ name: c, keys: cats[c] }));
+    // Add any remaining uncategorized
+    Object.keys(cats).forEach(c => {
+      if (!catOrder.includes(c) && c !== 'Advanced') {
+        categories.push({ name: c, keys: cats[c] });
+      }
+    });
+
+    res.json({ ok: true, keys, categories });
   } catch (e) {
     res.json({ ok: false, error: e.message });
   }

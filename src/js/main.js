@@ -629,7 +629,6 @@ async function loadHome(container) {
     </div>
     <div class="card-grid" id="home-bottom" style="margin-top:16px;">
       <div class="card" id="home-gateways"><div class="card-title">Gateways</div><div class="loading">Loading</div></div>
-      <div class="card" id="home-hci-panel"><div class="card-title">HCI</div><div class="loading">Loading</div></div>
       <div class="card">
         <div class="card-title">Hermes Auth</div>
         <div id="home-auth-list"><div class="loading">Loading auth...</div></div>
@@ -680,9 +679,6 @@ async function loadHome(container) {
     if (gwCard) {
       gwCard.innerHTML = `<div class="card-title">Gateways</div>${gwHtml || '<div class="stat-row"><span class="stat-label">No profiles</span></div>'}`;
     }
-
-    // Load HCI version panel
-    loadHCIPanel();
 
     // Load auth into home
     loadHomeAuth();
@@ -1857,7 +1853,7 @@ async function loadAgentConfig(container, name) {
       if (isEditMode) {
         editControls = `
           <div style="margin-bottom:12px;display:flex;gap:8px;">
-            <button class="btn btn-primary" onclick="saveConfig('${name}','${catKey}')">💾 Save</button>
+            <button class="btn btn-primary" onclick="saveConfigForm('${name}','${catKey}')">💾 Save</button>
             <button class="btn btn-ghost" onclick="cancelEdit('${catKey}')">↺ Revert</button>
           </div>
         `;
@@ -1868,41 +1864,47 @@ async function loadAgentConfig(container, name) {
           <div class="card-title">${categories.find(c => c.key === catKey)?.label || catKey}</div>
           ${editControls}
           ${entries.map(([k, v]) => {
-            const val = typeof v === 'object' ? JSON.stringify(v) : String(v);
             const isBool = typeof v === 'boolean';
             const isNum = typeof v === 'number';
+            const isObj = typeof v === 'object' && v !== null;
+            const isSensitive = /key|token|secret|password|passwd/i.test(k);
             
             if (isEditMode) {
               if (isBool) {
                 return `
                   <div class="stat-row">
-                    <span class="stat-label">${k}</span>
-                    <select class="stat-value" id="config-input-${k}">
-                      <option value="true" ${v ? 'selected' : ''}>Enabled</option>
-                      <option value="false" ${!v ? 'selected' : ''}>Disabled</option>
-                    </select>
+                    <span class="stat-label">${escapeHtml(k)}</span>
+                    <label style="display:flex;align-items:center;gap:6px;">
+                      <input type="checkbox" id="config-input-${escapeHtml(k)}" data-cfg-key="${escapeHtml(k)}" data-cfg-type="bool" ${v ? 'checked' : ''} style="accent-color:var(--gold);" />
+                      <span style="font-size:12px;color:var(--fg);">${v ? 'Enabled' : 'Disabled'}</span>
+                    </label>
                   </div>
                 `;
               } else if (isNum) {
                 return `
                   <div class="stat-row">
-                    <span class="stat-label">${k}</span>
-                    <input type="number" id="config-input-${k}" value="${v}" style="width:100%;padding:4px 8px;background:var(--bg-input);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:var(--font);font-size:12px;" />
+                    <span class="stat-label">${escapeHtml(k)}</span>
+                    <input type="number" id="config-input-${escapeHtml(k)}" data-cfg-key="${escapeHtml(k)}" data-cfg-type="num" value="${v}" style="width:160px;padding:4px 8px;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;color:var(--fg);font-size:12px;" />
                   </div>
                 `;
               } else {
+                const inputType = isSensitive ? 'password' : 'text';
                 return `
                   <div class="stat-row">
-                    <span class="stat-label">${k}</span>
-                    <input type="text" id="config-input-${k}" value="${escapeHtml(val)}" style="width:100%;padding:4px 8px;background:var(--bg-input);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:var(--font);font-size:12px;" />
+                    <span class="stat-label">${escapeHtml(k)}</span>
+                    <div style="display:flex;gap:4px;flex:1;max-width:60%;">
+                      <input type="${inputType}" id="config-input-${escapeHtml(k)}" data-cfg-key="${escapeHtml(k)}" data-cfg-type="str" value="${escapeHtml(String(v ?? ''))}" style="flex:1;padding:4px 8px;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;color:var(--fg);font-size:12px;" />
+                      ${isSensitive ? `<button type="button" onclick="this.previousElementSibling.type=this.previousElementSibling.type==='password'?'text':'password'" style="background:none;border:none;cursor:pointer;font-size:13px;padding:4px;color:var(--fg-muted);">👁</button>` : ''}
+                    </div>
                   </div>
                 `;
               }
             } else {
+              const display = isObj ? `{${Object.keys(v).length} keys}` : String(v ?? '');
               return `
                 <div class="stat-row">
-                  <span class="stat-label">${k}</span>
-                  <span class="stat-value">${isBool ? (v ? '✓ enabled' : '✗ disabled') : escapeHtml(val)}</span>
+                  <span class="stat-label">${escapeHtml(k)}</span>
+                  <span class="stat-value">${isBool ? (v ? '✓ enabled' : '✗ disabled') : escapeHtml(display)}</span>
                 </div>
               `;
             }
@@ -2128,7 +2130,7 @@ async function loadUsage(container) {
         <div class="page-title">Usage & Analytics</div>
         <div class="page-subtitle">Token usage, costs, and activity breakdown</div>
       </div>
-      <div style="display:flex;gap:8px;">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
         <select id="usage-days" class="log-level-select">
           <option value="1">Today</option>
           <option value="7" selected>7 days</option>
@@ -2138,30 +2140,58 @@ async function loadUsage(container) {
         <select id="usage-agent" class="log-level-select">
           <option value="">All agents</option>
         </select>
-        <button class="btn btn-ghost" onclick="loadUsage(document.querySelector('.page.active'))">↻ Refresh</button>
+        <button class="btn btn-primary" id="usage-apply-btn" onclick="fetchUsageData()">Apply</button>
       </div>
     </div>
-    <div class="card-grid" id="usage-overview">
-      <div class="card"><div class="card-title">Overview</div><div class="loading">Loading</div></div>
-      <div class="card"><div class="card-title">Models</div><div class="loading">Loading</div></div>
-      <div class="card"><div class="card-title">Platforms</div><div class="loading">Loading</div></div>
+
+    <!-- Overview stats bar -->
+    <div id="usage-overview-bar" class="card" style="margin-top:12px;">
+      <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;">
+        <span class="stat-label" style="white-space:nowrap;">Sessions</span>
+        <span class="stat-label" style="white-space:nowrap;">Messages</span>
+        <span class="stat-label" style="white-space:nowrap;">Input Tokens</span>
+        <span class="stat-label" style="white-space:nowrap;">Output Tokens</span>
+        <span class="stat-label" style="white-space:nowrap;">Total Tokens</span>
+        <span class="stat-label" style="white-space:nowrap;">Est. Cost</span>
+        <span class="stat-label" style="white-space:nowrap;">Active Time</span>
+        <span class="stat-label" style="white-space:nowrap;">Avg Session</span>
+      </div>
     </div>
-    <div class="card" style="margin-top:16px;">
-      <div class="card-title">Daily Token Trend</div>
-      <canvas id="usage-chart-tokens" height="200"></canvas>
-    </div>
+
+    <!-- Charts: 2-column layout -->
     <div class="card-grid" style="margin-top:16px;">
-      <div class="card" style="flex:1;">
-        <div class="card-title">Daily Cost</div>
-        <canvas id="usage-chart-cost" height="180"></canvas>
+      <div class="card">
+        <div class="card-title">Daily Token Trend</div>
+        <canvas id="usage-chart-tokens" height="160"></canvas>
       </div>
-      <div class="card" style="flex:1;">
-        <div class="card-title">Model Distribution</div>
-        <canvas id="usage-chart-models" height="180"></canvas>
+      <div class="card">
+        <div style="display:flex;flex-direction:column;gap:16px;">
+          <div>
+            <div class="card-title" style="margin-bottom:8px;">Daily Cost</div>
+            <canvas id="usage-chart-cost" height="100"></canvas>
+          </div>
+          <div>
+            <div class="card-title" style="margin-bottom:8px;">Model Distribution</div>
+            <canvas id="usage-chart-models" height="120"></canvas>
+          </div>
+        </div>
       </div>
     </div>
-    <div class="card-grid" id="usage-tools" style="margin-top:16px;">
-      <div class="card"><div class="card-title">Top Tools</div><div class="loading">Loading</div></div>
+
+    <!-- Models + Platforms + Top Tools in one row -->
+    <div class="card-grid" style="margin-top:16px;">
+      <div class="card">
+        <div class="card-title">Models</div>
+        <div id="usage-models-list"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Platforms</div>
+        <div id="usage-platforms-list"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Top Tools</div>
+        <div id="usage-tools-list"></div>
+      </div>
     </div>
   `;
 
@@ -2177,94 +2207,112 @@ async function loadUsage(container) {
         agentSelect.appendChild(opt);
       });
     }
-
-    // Fetch usage data
-    await fetchUsageData();
-
-    // Bind filter change → auto-refresh
-    ['usage-days', 'usage-agent'].forEach(id => {
-      document.getElementById(id)?.addEventListener('change', fetchUsageData);
-    });
-
-    // Refresh button — uses current filter values
-    document.querySelector('[onclick*="loadUsage"]')?.addEventListener('click', (e) => {
-      e.preventDefault();
-      fetchUsageData();
-    });
-
   } catch (e) {
-    document.getElementById('usage-overview').innerHTML = `<div class="card"><div class="card-title">Error</div><div class="error-msg">${e.message}</div></div>`;
+    // ignore
   }
 }
 
 async function fetchUsageData() {
-  const days = document.getElementById('usage-days')?.value || '7';
-  const agent = document.getElementById('usage-agent')?.value || '';
-  const query = agent ? `?profile=${agent}` : '';
+  const btn = document.getElementById('usage-apply-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
 
-  // Fetch both overview + daily data in parallel
-  const [res, dailyRes] = await Promise.all([
-    api(`/api/usage/${days}${query}`),
-    api(`/api/usage/daily/${days}${query}`),
-  ]);
-
-  if (!res.ok) {
-    document.getElementById('usage-overview').innerHTML = `<div class="card"><div class="card-title">Error</div><div class="error-msg">${res.error || 'Failed to load'}</div></div>`;
-    return;
+  // Overview bar — show loading
+  const barEl = document.getElementById('usage-overview-bar');
+  if (barEl) {
+    barEl.innerHTML = `<div style="display:flex;gap:24px;flex-wrap:wrap;align-items:center;">
+      <span style="color:var(--fg-muted);font-size:13px;">Loading…</span>
+    </div>`;
   }
 
-  const d = res;
+  try {
+    const days = document.getElementById('usage-days')?.value || '7';
+    const agent = document.getElementById('usage-agent')?.value || '';
+    const query = agent ? `?profile=${agent}` : '';
 
-  // Overview card
-  const overviewEl = document.getElementById('usage-overview');
-  overviewEl.innerHTML = `
-    <div class="card">
-      <div class="card-title">Overview ${d.period ? '(' + d.period + ')' : ''}</div>
-      <div class="stat-row"><span class="stat-label">Sessions</span><span class="stat-value">${d.sessions}</span></div>
-      <div class="stat-row"><span class="stat-label">Messages</span><span class="stat-value">${(d.messages || 0).toLocaleString()}</span></div>
-      <div class="stat-row"><span class="stat-label">Input tokens</span><span class="stat-value">${formatNumber(d.inputTokens)}</span></div>
-      <div class="stat-row"><span class="stat-label">Output tokens</span><span class="stat-value">${formatNumber(d.outputTokens)}</span></div>
-      <div class="stat-row"><span class="stat-label">Total tokens</span><span class="stat-value">${formatNumber(d.totalTokens)}</span></div>
-      <div class="stat-row"><span class="stat-label">Est. cost</span><span class="stat-value">${d.cost || '$0.00'}</span></div>
-      <div class="stat-row"><span class="stat-label">Active time</span><span class="stat-value">${d.activeTime || '—'}</span></div>
-      <div class="stat-row"><span class="stat-label">Avg session</span><span class="stat-value">${d.avgSession || '—'}</span></div>
-    </div>
-    <div class="card">
-      <div class="card-title">Models</div>
-      ${d.models && d.models.length > 0 ? d.models.map(m => `
-        <div class="stat-row">
-          <span class="stat-label">${m.name}</span>
-          <span class="stat-value">${m.sessions} sess · ${m.tokens} tokens</span>
-        </div>
-      `).join('') : '<div class="stat-row"><span class="stat-label">No data</span></div>'}
-    </div>
-    <div class="card">
-      <div class="card-title">Platforms</div>
-      ${d.platforms && d.platforms.length > 0 ? d.platforms.map(p => `
-        <div class="stat-row">
-          <span class="stat-label">${p.name}</span>
-          <span class="stat-value">${p.sessions} sess · ${p.tokens} tokens</span>
-        </div>
-      `).join('') : '<div class="stat-row"><span class="stat-label">No data</span></div>'}
-    </div>
-  `;
+    const [res, dailyRes] = await Promise.all([
+      api(`/api/usage/${days}${query}`),
+      api(`/api/usage/daily/${days}${query}`),
+    ]);
 
-  // Render charts
-  renderUsageCharts(d, dailyRes.ok ? dailyRes : null);
+    if (!res.ok) {
+      if (barEl) barEl.innerHTML = `<div class="error-msg">${escapeHtml(res.error || 'Failed to load')}</div>`;
+      return;
+    }
 
-  // Top Tools card
-  const toolsEl = document.getElementById('usage-tools');
-  toolsEl.innerHTML = `
-    <div class="card">
-      <div class="card-title">Top Tools</div>
-      ${d.topTools && d.topTools.length > 0 ? d.topTools.map(t => `
-        <div class="stat-row">
-          <span class="stat-label">${t.name}</span>
-          <span class="stat-value">${t.calls} calls (${t.pct})</span>
+    const d = res;
+
+    // Render compact overview bar
+    if (barEl) {
+      barEl.innerHTML = `
+        <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:center;">
+          <div style="text-align:center;min-width:60px;">
+            <div style="font-size:20px;font-weight:700;color:var(--gold);">${d.sessions}</div>
+            <div style="font-size:10px;color:var(--fg-muted);">Sessions</div>
+          </div>
+          <div style="text-align:center;min-width:70px;">
+            <div style="font-size:20px;font-weight:700;color:var(--gold);">${(d.messages || 0).toLocaleString()}</div>
+            <div style="font-size:10px;color:var(--fg-muted);">Messages</div>
+          </div>
+          <div style="text-align:center;min-width:90px;">
+            <div style="font-size:20px;font-weight:700;color:var(--teal);">${formatNumber(d.inputTokens)}</div>
+            <div style="font-size:10px;color:var(--fg-muted);">Input Tokens</div>
+          </div>
+          <div style="text-align:center;min-width:90px;">
+            <div style="font-size:20px;font-weight:700;color:var(--coral);">${formatNumber(d.outputTokens)}</div>
+            <div style="font-size:10px;color:var(--fg-muted);">Output Tokens</div>
+          </div>
+          <div style="text-align:center;min-width:90px;">
+            <div style="font-size:20px;font-weight:700;color:var(--gold);">${formatNumber(d.totalTokens)}</div>
+            <div style="font-size:10px;color:var(--fg-muted);">Total Tokens</div>
+          </div>
+          <div style="text-align:center;min-width:70px;">
+            <div style="font-size:20px;font-weight:700;color:var(--gold);">${d.cost || '$0.00'}</div>
+            <div style="font-size:10px;color:var(--fg-muted);">Est. Cost</div>
+          </div>
+          <div style="text-align:center;min-width:80px;">
+            <div style="font-size:16px;font-weight:600;color:var(--fg-muted);">${d.activeTime || '—'}</div>
+            <div style="font-size:10px;color:var(--fg-muted);">Active Time</div>
+          </div>
+          <div style="text-align:center;min-width:80px;">
+            <div style="font-size:16px;font-weight:600;color:var(--fg-muted);">${d.avgSession || '—'}</div>
+            <div style="font-size:10px;color:var(--fg-muted);">Avg Session</div>
+          </div>
         </div>
-      `).join('') : '<div class="stat-row"><span class="stat-label">No data</span></div>'}
-    </div>
-  `;
+      `;
+    }
+
+    // Models
+    const modelsEl = document.getElementById('usage-models-list');
+    if (modelsEl) {
+      modelsEl.innerHTML = d.models && d.models.length > 0
+        ? d.models.map(m => `<div class="stat-row"><span class="stat-label">${escapeHtml(m.name)}</span><span class="stat-value">${m.sessions} · ${formatNumber(m.tokens)}</span></div>`).join('')
+        : '<div class="stat-row"><span class="stat-label">No data</span></div>';
+    }
+
+    // Platforms
+    const platEl = document.getElementById('usage-platforms-list');
+    if (platEl) {
+      platEl.innerHTML = d.platforms && d.platforms.length > 0
+        ? d.platforms.map(p => `<div class="stat-row"><span class="stat-label">${escapeHtml(p.name)}</span><span class="stat-value">${p.sessions} · ${formatNumber(p.tokens)}</span></div>`).join('')
+        : '<div class="stat-row"><span class="stat-label">No data</span></div>';
+    }
+
+    // Top Tools
+    const toolsEl = document.getElementById('usage-tools-list');
+    if (toolsEl) {
+      toolsEl.innerHTML = d.topTools && d.topTools.length > 0
+        ? d.topTools.slice(0, 5).map(t => `<div class="stat-row"><span class="stat-label">${escapeHtml(t.name)}</span><span class="stat-value">${t.calls} (${t.pct})</span></div>`).join('')
+        : '<div class="stat-row"><span class="stat-label">No data</span></div>';
+    }
+
+    // Charts
+    renderUsageCharts(d, dailyRes.ok ? dailyRes : null);
+
+  } catch (e) {
+    if (barEl) barEl.innerHTML = `<div class="error-msg">${escapeHtml(e.message)}</div>`;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Apply'; }
+  }
 }
 
 // Chart instances (destroy before re-render)
@@ -3970,7 +4018,7 @@ window.cancelEdit = function(type) {
   }
 };
 
-// Render config category (global version for window functions)
+// Render config category (form-based per-field editor)
 function renderConfigCategory(catKey) {
   const contentEl = document.getElementById('config-content');
   if (!contentEl || !state._config) return;
@@ -3994,23 +4042,100 @@ function renderConfigCategory(catKey) {
   }
 
   if (isEditMode) {
-    const yamlStr = typeof catConfig === 'object' ? JSON.stringify(catConfig, null, 2) : String(catConfig);
+    // Form-based editing: each field gets its own input
+    const fieldRows = Object.entries(catConfig).map(([k, v]) => {
+      const isObj = typeof v === 'object' && v !== null;
+      const isBool = typeof v === 'boolean';
+      const isNum = typeof v === 'number';
+      const isSensitive = /key|token|secret|password|passwd/i.test(k);
+
+      if (isObj) {
+        // Nested object — show collapsed with raw JSON viewer
+        return `
+          <div style="margin-bottom:12px;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;">
+            <div style="background:var(--bg-inset);padding:8px 12px;display:flex;justify-content:space-between;align-items:center;cursor:pointer;" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none'">
+              <span style="font-size:12px;font-weight:600;color:var(--fg);">${escapeHtml(k)}</span>
+              <span style="font-size:11px;color:var(--fg-muted);">${Object.keys(v).length} nested values ▾</span>
+            </div>
+            <div style="display:none;padding:8px;">
+              <textarea id="cfg-nested-${escapeHtml(k)}" style="width:100%;min-height:120px;font-family:var(--font-mono,monospace);font-size:11px;background:var(--bg-input);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:8px;resize:vertical;" spellcheck="false">${escapeHtml(JSON.stringify(v, null, 2))}</textarea>
+            </div>
+          </div>
+        `;
+      }
+
+      if (isBool) {
+        return `
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;min-width:200px;">
+              <input type="checkbox" id="cfg-${escapeHtml(k)}" ${v ? 'checked' : ''} data-cfg-key="${escapeHtml(k)}" data-cfg-type="bool"
+                style="width:16px;height:16px;accent-color:var(--gold);cursor:pointer;" />
+              <span style="font-size:12px;color:var(--fg);">${escapeHtml(k)}</span>
+            </label>
+            <span style="font-size:11px;color:var(--fg-muted);">boolean</span>
+          </div>
+        `;
+      }
+
+      if (isNum) {
+        return `
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
+            <label style="min-width:200px;">
+              <span style="font-size:12px;color:var(--fg);">${escapeHtml(k)}</span>
+            </label>
+            <input type="number" id="cfg-${escapeHtml(k)}" value="${v}" data-cfg-key="${escapeHtml(k)}" data-cfg-type="num"
+              style="flex:1;background:var(--bg-input);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:12px;" />
+          </div>
+        `;
+      }
+
+      // String value
+      const inputType = isSensitive ? 'password' : 'text';
+      return `
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
+          <label style="min-width:200px;">
+            <span style="font-size:12px;color:var(--fg);">${escapeHtml(k)}</span>
+          </label>
+          <div style="display:flex;flex:1;gap:4px;">
+            <input type="${inputType}" id="cfg-${escapeHtml(k)}" value="${escapeHtml(String(v ?? ''))}" data-cfg-key="${escapeHtml(k)}" data-cfg-type="str"
+              style="flex:1;background:var(--bg-input);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:12px;" />
+            ${isSensitive ? `<button type="button" onclick="this.previousElementSibling.type=this.previousElementSibling.type==='password'?'text':'password'" style="background:none;border:none;cursor:pointer;font-size:14px;padding:4px;color:var(--fg-muted);">👁</button>` : ''}
+          </div>
+        </div>
+      `;
+    }).join('');
+
     contentEl.innerHTML = `
       <div class="card">
-        <div class="card-title">${catKey} (editing)</div>
-        <textarea id="config-edit-textarea" style="width:100%;min-height:300px;font-family:var(--font);font-size:12px;background:var(--bg-input);color:var(--fg);border:1px solid var(--border);border-radius:var(--radius);padding:12px;resize:vertical;" spellcheck="false">${escapeHtml(yamlStr)}</textarea>
-        <div style="display:flex;gap:8px;margin-top:10px;">
-          <button class="btn btn-primary" onclick="window.saveConfig('${profile}','${catKey}')">💾 Save</button>
+        <div class="card-title">${catKey} — Editing</div>
+        <div style="max-height:60vh;overflow-y:auto;padding-right:4px;">
+          ${fieldRows}
+        </div>
+        <div style="display:flex;gap:8px;margin-top:14px;">
+          <button class="btn btn-primary" onclick="window.saveConfigForm('${profile}','${catKey}')">💾 Save changes</button>
           <button class="btn btn-ghost" onclick="window.cancelEdit('${catKey}')">↺ Revert</button>
         </div>
       </div>
     `;
   } else {
+    // View mode: stat rows with Edit button
     let rows = '';
     if (typeof catConfig === 'object') {
       rows = Object.entries(catConfig).map(([k, v]) => {
-        const display = typeof v === 'object' ? JSON.stringify(v) : String(v);
-        return `<div class="stat-row"><span class="stat-label">${escapeHtml(k)}</span><span class="stat-value" style="max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(display)}">${escapeHtml(display)}</span></div>`;
+        const isObj = typeof v === 'object' && v !== null;
+        const isBool = typeof v === 'boolean';
+        let display, cls;
+        if (isBool) {
+          display = v ? '✓ enabled' : '✗ disabled';
+          cls = v ? 'status-ok' : 'status-off';
+        } else if (isObj) {
+          display = `{${Object.keys(v).length} keys}`;
+          cls = '';
+        } else {
+          display = String(v ?? '');
+          cls = '';
+        }
+        return `<div class="stat-row"><span class="stat-label">${escapeHtml(k)}</span><span class="stat-value ${cls}">${escapeHtml(display)}</span></div>`;
       }).join('');
     }
     contentEl.innerHTML = `
@@ -4025,37 +4150,251 @@ function renderConfigCategory(catKey) {
   }
 }
 
+// Save config from form-based editor
+window.saveConfigForm = async function(profile, category) {
+  const catConfig = state._config?.config[category];
+  if (!catConfig) { showToast('Config not loaded', 'error'); return; }
+
+  // Start with existing config, apply changes
+  const updated = JSON.parse(JSON.stringify(catConfig));
+
+  // Process form inputs
+  document.querySelectorAll('[data-cfg-key]').forEach(input => {
+    const key = input.dataset.cfgKey;
+    const type = input.dataset.cfgType;
+    if (type === 'bool') {
+      updated[key] = input.checked;
+    } else if (type === 'num') {
+      updated[key] = Number(input.value);
+    } else {
+      updated[key] = input.value;
+    }
+  });
+
+  // Process nested JSON fields
+  Object.keys(catConfig).forEach(k => {
+    if (typeof catConfig[k] === 'object' && catConfig[k] !== null) {
+      const ta = document.getElementById('cfg-nested-' + k);
+      if (ta) {
+        try {
+          updated[k] = JSON.parse(ta.value);
+        } catch {
+          showToast(`Invalid JSON in "${k}"`, 'error');
+          return;
+        }
+      }
+    }
+  });
+
+  try {
+    const res = await api('/api/config/' + encodeURIComponent(profile), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': state.csrfToken || '' },
+      body: JSON.stringify({ config: { [category]: updated } })
+    });
+    if (res.ok) {
+      if (state._config) state._config.config[category] = updated;
+      showToast('Config saved', 'success');
+      cancelEdit(category);
+    } else {
+      showToast(res.output || 'Save failed', 'error');
+    }
+  } catch (e) { showToast(e.message, 'error'); }
+};
+
+// Secrets editor — grouped categories, hermes-agent dashboard style
 async function loadSecretsTab(contentEl, profile, isEditMode) {
   contentEl.innerHTML = `<div class="card"><div class="card-title">Environment Secrets</div><div class="loading">Loading secrets...</div></div>`;
   try {
-    const keysRes = await api(`/api/keys/${profile}`);
-    const keysData = keysRes.ok ? keysRes.keys : [];
-    let html = `<div class="card"><div class="card-title">Environment Secrets</div>`;
-    if (keysData.length === 0) {
+    const res = await api(`/api/keys/${profile}`);
+    if (!res.ok) {
+      contentEl.innerHTML = `<div class="card"><div class="card-title">Secrets</div><div class="error-msg">${escapeHtml(res.error || 'Failed to load')}</div></div>`;
+      return;
+    }
+
+    const categories = res.categories || [];
+    const allKeys = res.keys || [];
+
+    // Check if there are advanced keys
+    const hasAdvanced = allKeys.some(k => k.is_advanced);
+
+    let html = `<div class="card">
+      <div class="card-title" style="display:flex;justify-content:space-between;align-items:center;">
+        <span>Environment Secrets</span>
+        <div style="display:flex;gap:8px;align-items:center;">
+          ${hasAdvanced ? `<button class="btn btn-ghost btn-sm" id="adv-toggle-btn" onclick="window.toggleAdvancedSecrets()">Show Advanced (${allKeys.filter(k=>k.is_advanced).length})</button>` : ''}
+          ${isEditMode
+            ? `<button class="btn btn-primary btn-sm" onclick="window.saveSecrets('${profile}')">💾 Save</button><button class="btn btn-ghost btn-sm" onclick="window.cancelEdit('secrets')">↺ Revert</button>`
+            : `<button class="btn btn-primary btn-sm" onclick="window.enableEdit('secrets')">✏️ Edit</button>`}
+        </div>
+      </div>`;
+
+    if (categories.length === 0) {
       html += `<div class="stat-row"><span class="stat-label">No secrets configured</span></div>`;
     } else {
-      html += `<table class="data-table"><thead><tr><th>Key</th><th>Value</th><th>Actions</th></tr></thead><tbody>`;
-      keysData.forEach(k => {
-        const val = isEditMode
-          ? `<input class="modal-input" style="width:100%;margin:0;" data-secret-key="${escapeHtml(k.name)}" value="${k.value ? escapeHtml(k.value) : ''}" type="password" />`
-          : `<span style="color:var(--fg-muted);">${k.set ? '••••••' : '(not set)'}</span>`;
-        const actions = isEditMode
-          ? `<button class="btn btn-ghost btn-sm" onclick="window.revealSecret('${escapeHtml(k.name)}','${profile}')">👁</button>`
-          : `<button class="btn btn-ghost btn-sm" onclick="window.revealSecret('${escapeHtml(k.name)}','${profile}')">👁</button>`;
-        html += `<tr><td style="font-family:var(--font);font-size:12px;">${escapeHtml(k.name)}</td><td>${val}</td><td>${actions}</td></tr>`;
+      categories.forEach((cat, ci) => {
+        const catId = `sec-cat-${ci}`;
+        const isAdvCat = cat.name === 'Advanced' || cat.name === 'MCP Keys';
+        html += `
+          <div style="margin-top:${ci > 0 ? '16px' : '0'};">
+            <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer;" onclick="window.toggleSecretCat('${catId}')">
+              <span style="font-size:13px;font-weight:600;color:var(--fg);">${escapeHtml(cat.name)}</span>
+              <span style="font-size:11px;color:var(--fg-muted);">(${cat.keys.length})</span>
+              <span style="font-size:11px;color:var(--fg-muted);margin-left:auto;">▾</span>
+            </div>
+            <div id="${catId}" class="secret-cat-body">
+              ${cat.keys.map(k => {
+                const rowId = `sec-row-${profile}-${k.name}`;
+                const inputId = `sec-input-${k.name}`;
+                if (isEditMode) {
+                  return `
+                    <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border-subtle);" id="${rowId}">
+                      <div style="min-width:200px;">
+                        <div style="font-family:var(--font-mono,monospace);font-size:12px;color:var(--fg);">${escapeHtml(k.name)}</div>
+                        <div style="font-size:10px;color:var(--fg-muted);">${escapeHtml(k.description || '')}</div>
+                      </div>
+                      <div style="flex:1;display:flex;gap:4px;">
+                        <input id="${inputId}" type="password" data-secret-name="${escapeHtml(k.name)}" data-secret-new="false" value="" placeholder="${k.has_value ? '••••••••' : 'Enter value...'}" style="flex:1;background:var(--bg-input);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;" />
+                        <button type="button" onclick="this.previousElementSibling.type=this.previousElementSibling.type==='password'?'text':'password'" style="background:none;border:none;cursor:pointer;font-size:13px;padding:4px;color:var(--fg-muted);">👁</button>
+                      </div>
+                      ${k.provider_url ? `<a href="${escapeHtml(k.provider_url)}" target="_blank" style="font-size:11px;color:var(--teal);text-decoration:none;white-space:nowrap;">Get key →</a>` : '<span style="width:60px;"></span>'}
+                      <button class="btn btn-ghost btn-sm" onclick="window.deleteSecret('${escapeHtml(k.name)}','${profile}')" title="Delete">✕</button>
+                    </div>
+                  `;
+                } else {
+                  return `
+                    <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border-subtle);" id="${rowId}">
+                      <div style="min-width:200px;">
+                        <div style="font-family:var(--font-mono,monospace);font-size:12px;color:var(--fg);">${escapeHtml(k.name)}</div>
+                        <div style="font-size:10px;color:var(--fg-muted);">${escapeHtml(k.description || '')}</div>
+                      </div>
+                      <div style="flex:1;">
+                        <span style="font-size:12px;color:var(--fg-muted);font-family:var(--font-mono,monospace);">${escapeHtml(k.masked)}</span>
+                      </div>
+                      ${k.provider_url ? `<a href="${escapeHtml(k.provider_url)}" target="_blank" style="font-size:11px;color:var(--teal);text-decoration:none;white-space:nowrap;">Get key →</a>` : '<span style="width:60px;"></span>'}
+                      <button class="btn btn-ghost btn-sm" onclick="window.revealSecret('${escapeHtml(k.name)}','${profile}')" title="Reveal">👁</button>
+                    </div>
+                  `;
+                }
+              }).join('')}
+            </div>
+          </div>
+        `;
       });
-      html += `</tbody></table>`;
     }
-    html += `<div style="display:flex;gap:8px;margin-top:10px;">
-      ${isEditMode
-        ? `<button class="btn btn-primary" onclick="window.saveSecrets('${profile}')">💾 Save</button><button class="btn btn-ghost" onclick="window.cancelEdit('secrets')">↺ Revert</button>`
-        : `<button class="btn btn-primary" onclick="window.enableEdit('secrets')">✏️ Edit</button>`}
-    </div></div>`;
+
+    // Add new key section (edit mode only)
+    if (isEditMode) {
+      html += `
+        <div style="margin-top:16px;padding:12px;border:1px dashed var(--border);border-radius:var(--radius);">
+          <div style="font-size:12px;font-weight:600;color:var(--fg);margin-bottom:8px;">+ Add new key</div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <input id="new-secret-name" type="text" placeholder="KEY_NAME" style="width:180px;background:var(--bg-input);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;font-family:var(--font-mono,monospace);" />
+            <input id="new-secret-value" type="password" placeholder="value" style="flex:1;background:var(--bg-input);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;" />
+            <button type="button" onclick="this.previousElementSibling.type=this.previousElementSibling.type==='password'?'text':'password'" style="background:none;border:none;cursor:pointer;font-size:13px;padding:4px;color:var(--fg-muted);">👁</button>
+            <button class="btn btn-primary btn-sm" onclick="window.addSecret('${profile}')">Add</button>
+          </div>
+        </div>
+      `;
+    }
+
+    html += `</div>`;
     contentEl.innerHTML = html;
+
+    // In edit mode, load existing values into inputs
+    if (isEditMode) {
+      allKeys.forEach(k => {
+        const input = document.getElementById(`sec-input-${k.name}`);
+        if (input) {
+          input.dataset.secretNew = 'false';
+          // Load current value from reveal endpoint
+          (async () => {
+            try {
+              const rv = await api(`/api/keys/${profile}/reveal/${k.name}`);
+              if (rv.ok && rv.value) {
+                input.value = rv.value;
+                input.placeholder = '';
+              }
+            } catch {}
+          })();
+        }
+      });
+    }
+
+    // Collapse advanced by default
+    if (hasAdvanced) {
+      allKeys.filter(k => k.is_advanced).forEach((k, i) => {
+        const body = document.getElementById(`sec-cat-${categories.findIndex(c => c.name === k.category)}`);
+        if (body && i === 0) {
+          // collapse advanced categories
+          const catIdx = categories.findIndex(c => c.name === k.category);
+          if (catIdx > 0) {
+            const catBody = document.getElementById(`sec-cat-${catIdx}`);
+            if (catBody) catBody.style.display = 'none';
+          }
+        }
+      });
+      window._advancedSecretsVisible = false;
+    }
+
   } catch {
     contentEl.innerHTML = `<div class="card"><div class="card-title">Secrets</div><div class="error-msg">Failed to load secrets</div></div>`;
   }
 }
+
+window.toggleSecretCat = function(catId) {
+  const body = document.getElementById(catId);
+  if (!body) return;
+  body.style.display = body.style.display === 'none' ? 'block' : 'none';
+};
+
+window.toggleAdvancedSecrets = function() {
+  window._advancedSecretsVisible = !window._advancedSecretsVisible;
+  const btn = document.getElementById('adv-toggle-btn');
+  document.querySelectorAll('[id^="sec-cat-"]').forEach((el, idx) => {
+    // Find which category this is
+    const catBodies = el.id.match(/sec-cat-(\d+)/);
+    if (catBodies) {
+      // Could check if it's advanced category
+    }
+  });
+  // Simple approach: toggle all sec-cat-* bodies
+  const allBodies = Array.from(document.querySelectorAll('[id^="sec-cat-"]'));
+  allBodies.forEach(body => {
+    if (body.id === 'sec-cat-0') return; // never collapse first category
+    body.style.display = window._advancedSecretsVisible ? 'block' : 'none';
+  });
+  if (btn) {
+    btn.textContent = window._advancedSecretsVisible ? 'Hide Advanced' : `Show Advanced (${allBodies.length - 1})`;
+  }
+};
+
+window.addSecret = async function(profile) {
+  const nameInput = document.getElementById('new-secret-name');
+  const valueInput = document.getElementById('new-secret-value');
+  const name = nameInput?.value.trim();
+  const value = valueInput?.value;
+  if (!name) { showToast('Enter a key name', 'error'); return; }
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+    showToast('Key name must match [A-Za-z_][A-Za-z0-9_]*', 'error'); return;
+  }
+  try {
+    const res = await api('/api/keys/' + encodeURIComponent(profile), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': state.csrfToken || '' },
+      body: JSON.stringify({ name, value: value || '' })
+    });
+    if (res.ok) {
+      showToast(`Added ${name}`, 'success');
+      nameInput.value = '';
+      valueInput.value = '';
+      // Re-render secrets tab
+      loadSecretsTab(document.getElementById('config-content'), profile, true);
+    } else {
+      showToast(res.output || 'Failed to add', 'error');
+    }
+  } catch (e) { showToast(e.message, 'error'); }
+};
 
 window.revealSecret = async function(keyName, profile) {
   try {
@@ -4088,31 +4427,24 @@ window.deleteSecret = async function(keyName, profile) {
 };
 
 window.saveSecrets = async function(profile) {
-  const rows = document.querySelectorAll('#config-content table tbody tr');
-  let updated = 0;
-  for (const row of rows) {
-    const keyCell = row.querySelector('td.mono');
-    if (!keyCell) continue;
-    const keyName = keyCell.textContent.trim();
-    const input = row.querySelector('input');
-    if (!input) continue;
-    const newValue = input.value.trim();
+  const inputs = document.querySelectorAll('[data-secret-name]');
+  let saved = 0, failed = 0;
+  for (const input of inputs) {
+    const keyName = input.dataset.secretName;
+    const newValue = input.value;
     try {
       const res = await api('/api/keys/' + encodeURIComponent(profile), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': state.csrfToken || '' },
         body: JSON.stringify({ name: keyName, value: newValue })
       });
-      if (res.ok) updated++;
-      else showToast(`Failed to save ${keyName}: ${res.output}`, 'error');
-    } catch (e) {
-      showToast(`Failed to save ${keyName}: ${e.message}`, 'error');
-    }
+      if (res.ok) saved++;
+      else { failed++; showToast(`Failed: ${keyName}`, 'error'); }
+    } catch (e) { failed++; showToast(`Error: ${keyName}`, 'error'); }
   }
-  if (updated > 0) {
-    showToast(`Saved ${updated} secret(s)`, 'success');
-    enableEdit('secrets'); // Re-enable edit mode to persist changes
-  }
+  showToast(`Saved ${saved} key(s)${failed ? `, ${failed} failed` : ''}`, failed > 0 ? 'warning' : 'success');
+  // Re-render secrets tab to reflect saved state
+  loadSecretsTab(document.getElementById('config-content'), profile, true);
 };
 
 window.saveConfig = async function(profile, category) {
@@ -4137,7 +4469,6 @@ window.saveConfig = async function(profile, category) {
     });
     showToast(res.ok ? 'Config saved' : (res.output || 'Save failed'), res.ok ? 'success' : 'error');
     if (res.ok) {
-      // Update state and re-render
       if (state._config) state._config.config[category] = value;
       cancelEdit(category);
     }
