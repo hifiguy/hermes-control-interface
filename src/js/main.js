@@ -2112,7 +2112,7 @@ async function fetchUsageData() {
 // Chart instances (destroy before re-render)
 const _charts = {};
 
-function renderUsageCharts(d) {
+function renderUsageCharts(d, daily) {
   const theme = state.theme === 'light' ? 'light' : 'dark';
   const gridColor = theme === 'dark' ? 'rgba(220,203,181,0.08)' : 'rgba(11,32,31,0.08)';
   const textColor = theme === 'dark' ? '#dccbb5' : '#0b201f';
@@ -2121,12 +2121,13 @@ function renderUsageCharts(d) {
   // Destroy existing charts
   Object.values(_charts).forEach(c => { try { c.destroy(); } catch {} });
 
-  // Daily Token Trend (from models data as proxy)
+  // Daily Token Trend
   const tokenCanvas = document.getElementById('usage-chart-tokens');
-  if (tokenCanvas) {
-    const labels = (d.models || []).map(m => m.name).slice(0, 8);
-    const inputData = (d.models || []).slice(0, 8).map(m => Math.round((m.tokens || 0) * 0.6));
-    const outputData = (d.models || []).slice(0, 8).map(m => Math.round((m.tokens || 0) * 0.4));
+  if (tokenCanvas && daily?.daily && daily.daily.length > 0) {
+    const labels = daily.daily.map(r => r.date);
+    const inputData = daily.daily.map(r => r.input_tokens || 0);
+    const outputData = daily.daily.map(r => r.output_tokens || 0);
+    const cacheData = daily.daily.map(r => r.cache_read_tokens || 0);
 
     _charts.tokens = new Chart(tokenCanvas, {
       type: 'bar',
@@ -2135,59 +2136,101 @@ function renderUsageCharts(d) {
         datasets: [
           { label: 'Input', data: inputData, backgroundColor: '#ffac02', borderRadius: 4 },
           { label: 'Output', data: outputData, backgroundColor: '#4ecdc4', borderRadius: 4 },
+          { label: 'Cache', data: cacheData, backgroundColor: '#a78bfa', borderRadius: 4 },
         ],
       },
       options: {
         responsive: true,
         plugins: { legend: { labels: { color: textColor } } },
         scales: {
-          x: { stacked: true, ticks: { color: textColor }, grid: { color: gridColor } },
+          x: { stacked: true, ticks: { color: textColor, maxRotation: 45 }, grid: { color: gridColor } },
           y: { stacked: true, ticks: { color: textColor, callback: v => formatNumber(v) }, grid: { color: gridColor } },
         },
       },
     });
-  }
-
-  // Daily Cost
-  const costCanvas = document.getElementById('usage-chart-cost');
-  if (costCanvas) {
-    const labels = (d.models || []).map(m => m.name).slice(0, 6);
-    const data = (d.models || []).slice(0, 6).map(() => (Math.random() * 2 + 0.1).toFixed(2));
-
-    _charts.cost = new Chart(costCanvas, {
+  } else if (tokenCanvas && d.models && d.models.length > 0) {
+    // Fallback: model distribution
+    const labels = d.models.map(m => m.name).slice(0, 8);
+    _charts.tokens = new Chart(tokenCanvas, {
       type: 'bar',
       data: {
         labels,
-        datasets: [{ label: 'Cost ($)', data, backgroundColor: colors.slice(0, 6), borderRadius: 4 }],
+        datasets: [{ label: 'Tokens', data: d.models.slice(0, 8).map(m => m.tokens || 0), backgroundColor: colors.slice(0, 8), borderRadius: 4 }],
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: { x: { ticks: { color: textColor }, grid: { color: gridColor } }, y: { ticks: { color: textColor, callback: v => formatNumber(v) }, grid: { color: gridColor } } },
+      },
+    });
+  }
+
+  // Daily Cost Trend
+  const costCanvas = document.getElementById('usage-chart-cost');
+  if (costCanvas && daily?.daily && daily.daily.length > 0) {
+    const labels = daily.daily.map(r => r.date);
+    const costData = daily.daily.map(r => r.cost || 0);
+
+    _charts.cost = new Chart(costCanvas, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Cost ($)',
+          data: costData,
+          borderColor: '#ffac02',
+          backgroundColor: 'rgba(255,172,2,0.1)',
+          fill: true,
+          tension: 0.3,
+          pointRadius: 3,
+        }],
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { color: textColor, maxRotation: 45 }, grid: { color: gridColor } },
+          y: { ticks: { color: textColor, callback: v => '$' + v.toFixed(2) }, grid: { color: gridColor } },
+        },
+      },
+    });
+  } else if (costCanvas) {
+    // Fallback: model cost distribution
+    const models = (d.models || []).slice(0, 6);
+    _charts.cost = new Chart(costCanvas, {
+      type: 'bar',
+      data: {
+        labels: models.map(m => m.name),
+        datasets: [{ label: 'Sessions', data: models.map(m => m.sessions || 0), backgroundColor: colors.slice(0, 6), borderRadius: 4 }],
       },
       options: {
         responsive: true,
         indexAxis: 'y',
         plugins: { legend: { display: false } },
-        scales: {
-          x: { ticks: { color: textColor, callback: v => '$' + v }, grid: { color: gridColor } },
-          y: { ticks: { color: textColor }, grid: { color: gridColor } },
-        },
+        scales: { x: { ticks: { color: textColor }, grid: { color: gridColor } }, y: { ticks: { color: textColor }, grid: { color: gridColor } } },
       },
     });
   }
 
   // Model Distribution (doughnut)
   const modelCanvas = document.getElementById('usage-chart-models');
-  if (modelCanvas && d.models && d.models.length > 0) {
+  const models = daily?.byModel || d.models;
+  if (modelCanvas && models && models.length > 0) {
+    const top = models.slice(0, 6);
     _charts.models = new Chart(modelCanvas, {
       type: 'doughnut',
       data: {
-        labels: d.models.slice(0, 6).map(m => m.name),
+        labels: top.map(m => m.name || m.model),
         datasets: [{
-          data: d.models.slice(0, 6).map(m => m.tokens || 0),
+          data: top.map(m => m.tokens || m.total_tokens || 0),
           backgroundColor: colors.slice(0, 6),
           borderWidth: 0,
         }],
       },
       options: {
         responsive: true,
-        plugins: { legend: { position: 'bottom', labels: { color: textColor, font: { size: 10 } } } },
+        cutout: '60%',
+        plugins: { legend: { position: 'bottom', labels: { color: textColor, font: { size: 10 }, padding: 8 } } },
       },
     });
   }
@@ -2440,6 +2483,17 @@ async function loadMaintenance(container) {
           <button class="btn btn-ghost" onclick="runUpdate()">Update Hermes</button>
         </div>
         <div id="update-result" style="margin-top:8px;"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Backup & Import</div>
+        <div style="font-size:12px;color:var(--fg-muted);margin-bottom:10px;">Create and restore Hermes data backups</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-ghost" onclick="createBackup()">📦 Create Backup</button>
+          <label class="btn btn-ghost" style="cursor:pointer;margin:0;">
+            📥 Import<input type="file" accept=".zip" onchange="importBackup(this)" style="display:none;" />
+          </label>
+        </div>
+        <div id="backup-result" style="margin-top:8px;"></div>
       </div>
     </div>
     <div class="card-grid" style="margin-top:16px;" id="maintenance-users">
@@ -3595,6 +3649,11 @@ window.saveCurrentFile = saveCurrentFile;
 window.loadFileExplorer = loadFileExplorer;
 window.resumeSession = resumeSession;
 window.toggleSessionDetail = toggleSessionDetail;
+window.createBackup = createBackup;
+window.importBackup = importBackup;
+window.hcirestart = hcirestart;
+window.hciupdate = hciupdate;
+window.hcidoctor = hcidoctor;
 window.openTerminalPanel = openTerminalPanel;
 window.loadHome = loadHome;
 window.loadAgentDetail = loadAgentDetail;

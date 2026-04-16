@@ -2785,6 +2785,53 @@ app.post('/api/doctor', requireRole('admin'), async (req, res) => {
   }
 });
 
+// ── Backup & Import ──
+app.post('/api/backup/create', requireRole('admin'), async (req, res) => {
+  try {
+    const output = await shell('hermes backup -o /tmp/hermes-backup.zip 2>&1', '60s');
+    if (output.includes('error') || output.includes('Error')) {
+      return res.json({ ok: false, error: output.trim() });
+    }
+    const filename = 'hermes-backup-' + new Date().toISOString().slice(0, 10) + '.zip';
+    res.json({ ok: true, path: '/tmp/hermes-backup.zip', filename, output: output.trim() });
+  } catch (e) {
+    res.json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/api/backup/import', requireRole('admin'), (req, res) => {
+  // Inline multer for this route
+  const multer = require('multer');
+  const upload = multer({ dest: '/tmp/', limits: { fileSize: 500 * 1024 * 1024 } });
+  upload.single('backup')(req, res, async (err) => {
+    if (err || !req.file) return res.json({ ok: false, error: err?.message || 'No file uploaded' });
+    try {
+      const zipPath = req.file.path;
+      const output = await new Promise((resolve, reject) => {
+        execFile('hermes', ['import', '--force', zipPath], { timeout: 60000, maxBuffer: 1024 * 1024 }, (err, stdout) => {
+          resolve(err ? (stdout || err.message) : stdout);
+        });
+      });
+      try { fs.unlinkSync(zipPath); } catch {}
+      if (output.includes('error') || output.includes('Error')) {
+        return res.json({ ok: false, error: output.trim() });
+      }
+      res.json({ ok: true, output: output.trim() });
+    } catch (e) {
+      res.json({ ok: false, error: e.message });
+    }
+  });
+});
+
+app.get('/api/backup/download', requireRole('admin'), (req, res) => {
+  const filePath = req.query.path;
+  if (!filePath || !filePath.endsWith('.zip') || filePath.includes('..')) {
+    return res.status(400).json({ error: 'Invalid path' });
+  }
+  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
+  res.download(filePath);
+});
+
 // Dump
 app.get('/api/dump', requireRole('admin'), async (req, res) => {
   try {
