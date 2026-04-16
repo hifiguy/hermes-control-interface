@@ -261,19 +261,19 @@ async function loadChat(container) {
       #chat-input { flex: 1; resize: none; max-height: 120px; padding: 10px 14px; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius); color: var(--fg); font-family: var(--font); font-size: 13px; outline: none; }
       #chat-input:focus { border-color: var(--fg); }
       .chat-sidebar-backdrop { display: none; position: fixed; inset: 56px 0 0 0; background: rgba(0,0,0,0.5); z-index: 99; }
-      .chat-sidebar-toggle { display: none; }
+      .chat-sidebar-toggle { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; background: transparent; border: 1px solid var(--border); border-radius: var(--radius); color: var(--fg); cursor: pointer; }
+      .chat-sidebar-toggle:hover { background: var(--bg-input); }
       @media (max-width: 768px) {
         .chat-sidebar { position: fixed; left: 0; top: 56px; height: calc(100vh - 56px); z-index: 100; }
         .chat-sidebar.collapsed { transform: translateX(-100%); }
         .chat-sidebar-backdrop.active { display: block; }
-        .chat-sidebar-toggle { display: inline-flex !important; }
         .chat-layout { margin: -16px; }
       }
     </style>
     <div class="chat-layout">
       <div id="chat-sidebar" class="chat-sidebar${sidebarCollapsed}">
         <div class="chat-sidebar-header">
-          <select id="chat-profile" class="modal-input" style="width:100%;margin:0;padding:8px;">
+          <select id="chat-profile" style="width:100%;margin:0;padding:8px;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius);color:var(--fg);font-family:var(--font);font-size:13px;outline:none;">
             ${profileOptions || '<option value="default">default</option>'}
           </select>
           <input type="text" id="chat-session-search" class="search-input" placeholder="Search sessions..." style="margin-top:6px;" />
@@ -574,8 +574,8 @@ function toggleChatSidebar() {
     sidebar.classList.toggle('collapsed', !state.chatSidebarOpen);
   }
   const backdrop = document.getElementById('chat-sidebar-backdrop');
-  if (backdrop && window.innerWidth <= 768) {
-    backdrop.style.display = state.chatSidebarOpen ? 'block' : 'none';
+  if (backdrop) {
+    backdrop.classList.toggle('active', state.chatSidebarOpen && window.innerWidth <= 768);
   }
 }
 
@@ -635,7 +635,6 @@ async function sendChatMessage() {
   try {
     // Only include sessionId in body if it exists (for resume)
     const bodyObj = { message: text, profile };
-    if (model) bodyObj.model = model;
     if (sessionId) bodyObj.sessionId = sessionId;
     const body = JSON.stringify(bodyObj);
     const response = await fetch('/api/chat/send', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': state.csrfToken || '' }, credentials: 'include', body });
