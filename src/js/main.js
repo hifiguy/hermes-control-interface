@@ -1763,11 +1763,19 @@ async function loadAgentConfig(container, name) {
     // Edit helpers — delegate to global renderConfigCategory (set below)
     window._enableEditLocal = function(type) {
       const contentEl = document.getElementById('config-content');
-      if (contentEl) { contentEl.dataset.editMode = 'true'; window.renderConfigCategory(type); }
+      if (contentEl) {
+        contentEl.dataset.editMode = 'true';
+        state._config && (state._config.activeCat = type);
+        window.renderConfigCategory(type);
+      }
     };
     window._cancelEditLocal = function(type) {
       const contentEl = document.getElementById('config-content');
-      if (contentEl) { contentEl.dataset.editMode = 'false'; window.renderConfigCategory(type); }
+      if (contentEl) {
+        contentEl.dataset.editMode = 'false';
+        state._config && (state._config.activeCat = type);
+        window.renderConfigCategory(type);
+      }
     };
     window.saveSecretsLocal = async function(profile) {
       const inputs = document.querySelectorAll('[data-secret-name]');
@@ -1812,6 +1820,7 @@ async function loadAgentConfig(container, name) {
     // renderConfigCategory is now global (defined below)
 
     // Initial render — use global renderConfigCategory (defined below)
+    state._config.activeCat = categories[0].key;
     window.renderConfigCategory(categories[0].key);
 
     // Tab switching
@@ -1820,6 +1829,7 @@ async function loadAgentConfig(container, name) {
       if (!tab) return;
       document.querySelectorAll('#config-tabs .tab').forEach(t => t.classList.remove('active'));
       tab.classList.add('active');
+      state._config.activeCat = tab.dataset.cat;
       window.renderConfigCategory(tab.dataset.cat);
     });
 
@@ -4235,7 +4245,9 @@ window.enableEdit = function(type) {
   const contentEl = document.getElementById('config-content');
   if (contentEl) {
     contentEl.dataset.editMode = 'true';
-    renderConfigCategory(type === 'secrets' ? 'secrets' : (contentEl.querySelector('.tab.active')?.dataset.cat || state._config?.categories?.[0]?.key || 'model'));
+    const cat = type === 'secrets' ? 'secrets' : (state._config?.activeCat || 'model');
+    state._config && (state._config.activeCat = cat);
+    renderConfigCategory(cat);
   }
 };
 
@@ -4243,7 +4255,9 @@ window.cancelEdit = function(type) {
   const contentEl = document.getElementById('config-content');
   if (contentEl) {
     contentEl.dataset.editMode = 'false';
-    renderConfigCategory(type === 'secrets' ? 'secrets' : (contentEl.querySelector('.tab.active')?.dataset.cat || state._config?.categories?.[0]?.key || 'model'));
+    const cat = type === 'secrets' ? 'secrets' : (state._config?.activeCat || 'model');
+    state._config && (state._config.activeCat = cat);
+    renderConfigCategory(cat);
   }
 };
 
@@ -4505,7 +4519,7 @@ async function loadSecretsTab(contentEl, profile, isEditMode) {
                         <div style="font-size:10px;color:var(--fg-muted);">${escapeHtml(k.description || '')}</div>
                       </div>
                       <div style="flex:1;">
-                        <span style="font-size:12px;color:var(--fg-muted);font-family:var(--font-mono,monospace);">${escapeHtml(k.masked)}</span>
+                        <span class="secret-masked-value" style="font-size:12px;color:var(--fg-muted);font-family:var(--font-mono,monospace);" data-masked="${escapeHtml(k.masked)}">${escapeHtml(k.masked)}</span>
                       </div>
                       ${k.provider_url ? `<a href="${escapeHtml(k.provider_url)}" target="_blank" style="font-size:11px;color:var(--teal);text-decoration:none;white-space:nowrap;">Get key →</a>` : '<span style="width:60px;"></span>'}
                       <button class="btn btn-ghost btn-sm" onclick="window.revealSecret('${escapeHtml(k.name)}','${profile}')" title="Reveal">👁</button>
@@ -4633,10 +4647,29 @@ window.addSecret = async function(profile) {
 };
 
 window.revealSecret = async function(keyName, profile) {
+  const row = document.getElementById(`sec-row-${profile}-${keyName}`);
+  const valueEl = row?.querySelector('.secret-masked-value');
+  const btn = row?.querySelector('button[title="Reveal"]') || row?.querySelector('button[title="Hide"]');
+
+  // Toggle off if already revealed
+  if (valueEl && valueEl.dataset.revealed === 'true') {
+    valueEl.textContent = valueEl.dataset.masked || '••••••••';
+    valueEl.dataset.revealed = 'false';
+    valueEl.style.color = 'var(--fg-muted)';
+    if (btn) btn.title = 'Reveal';
+    return;
+  }
+
   try {
     const res = await api(`/api/keys/${profile}/reveal/${keyName}`);
-    if (res.ok) {
-      showToast(`Revealed: ${keyName}`, 'info');
+    if (res.ok && res.value) {
+      if (valueEl) {
+        valueEl.textContent = res.value;
+        valueEl.dataset.revealed = 'true';
+        valueEl.dataset.masked = valueEl.dataset.masked || valueEl.textContent;
+        valueEl.style.color = 'var(--fg)';
+      }
+      if (btn) btn.title = 'Hide';
     } else {
       showToast(res.error || 'Failed to reveal', 'error');
     }
