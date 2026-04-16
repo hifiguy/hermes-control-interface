@@ -575,7 +575,7 @@ async function sendChatMessage() {
     if (stats) stats.textContent = state._currentChatSession || '—';
     if (elapsedEl) elapsedEl.textContent = elapsed + 's';
     // Refresh sidebar to show new session
-    loadChatSidebar();
+    refreshChatSidebar();
   } catch (e) {
     if (contentDiv) contentDiv.innerHTML = renderChatContent(fullContent) + '<div style="color:var(--red);margin-top:8px;">Error: ' + escapeHtml(e.message) + '</div>';
   } finally {
@@ -3947,7 +3947,7 @@ window.togglePwVis = function(btn) {
 };
 window.sendChatMessage = sendChatMessage;
 window.loadChatSession = loadChatSession;
-window.loadChatSidebar = loadChatSidebar;
+window.refreshChatSidebar = refreshChatSidebar;
 window.newChatSession = newChatSession;
 window.renameChatSession = renameChatSession;
 window.deleteChatSession = deleteChatSession;
