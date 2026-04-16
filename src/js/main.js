@@ -1759,6 +1759,58 @@ async function loadAgentConfig(container, name) {
       </div>
     `;
 
+    // Expose local render before any onclick can fire
+    window._renderLocalConfig = renderConfigCategory;
+
+    // Local edit helpers for the hamburger config tabs
+    window._enableEditLocal = function(type) {
+      const contentEl = document.getElementById('config-content');
+      if (contentEl) { contentEl.dataset.editMode = 'true'; renderConfigCategory(type); }
+    };
+    window._cancelEditLocal = function(type) {
+      const contentEl = document.getElementById('config-content');
+      if (contentEl) { contentEl.dataset.editMode = 'false'; renderConfigCategory(type); }
+    };
+    window.saveSecretsLocal = async function(profile) {
+      const inputs = document.querySelectorAll('[data-secret-name]');
+      let saved = 0, failed = 0;
+      for (const input of inputs) {
+        const keyName = input.dataset.secretName;
+        const newValue = input.value;
+        try {
+          const res = await api('/api/keys/' + encodeURIComponent(profile), {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': state.csrfToken || '' },
+            body: JSON.stringify({ name: keyName, value: newValue })
+          });
+          if (res.ok) saved++; else { failed++; showToast('Failed: ' + keyName, 'error'); }
+        } catch (e) { failed++; showToast('Error: ' + keyName, 'error'); }
+      }
+      showToast('Saved ' + saved + ' key(s)' + (failed ? ', ' + failed + ' failed' : ''), failed > 0 ? 'warning' : 'success');
+      renderConfigCategory('secrets');
+    };
+    window._saveConfigLocal = async function(profile, catKey) {
+      const catConfig = config[catKey];
+      if (!catConfig) { showToast('Config not loaded', 'error'); return; }
+      const updated = JSON.parse(JSON.stringify(catConfig));
+      document.querySelectorAll('[data-cfg-key]').forEach(input => {
+        const key = input.dataset.cfgKey;
+        const type = input.dataset.cfgType;
+        if (type === 'bool') updated[key] = input.checked;
+        else if (type === 'num') updated[key] = Number(input.value);
+        else updated[key] = input.value;
+      });
+      try {
+        const res = await api('/api/config/' + encodeURIComponent(profile), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': state.csrfToken || '' },
+          body: JSON.stringify({ config: { [catKey]: updated } })
+        });
+        if (res.ok) { config[catKey] = updated; showToast('Config saved', 'success'); window._cancelEditLocal(catKey); }
+        else { showToast(res.output || 'Save failed', 'error'); }
+      } catch (e) { showToast(e.message, 'error'); }
+    };
+
     function renderConfigCategory(catKey) {
       const contentEl = document.getElementById('config-content');
       if (!contentEl) return;
@@ -1804,10 +1856,9 @@ async function loadAgentConfig(container, name) {
                   <td><span class="mono" style="font-size:11px;${isEditMode ? '' : 'filter: blur(2px)'}">${isEditMode ? k.value : maskedValue}</span></td>
                   <td style="display:flex;gap:4px;">
                     ${isEditMode ? 
-                      `<button class="btn btn-ghost btn-sm" onclick="revealSecret('${k.name}','${name}')">👁</button>
-                      <button class="btn btn-ghost btn-sm" onclick="editSecret('${k.name}','${name}')">✎</button>
-                      <button class="btn btn-danger btn-sm" onclick="deleteSecret('${k.name}','${name}')">×</button>` :
-                      `<button class="btn btn-ghost btn-sm" onclick="revealSecret('${k.name}','${name}')">👁</button>`
+                      `<button class="btn btn-ghost btn-sm" onclick="window.revealSecret('${escapeHtml(k.name)}','${name}')">👁</button>
+                      <button class="btn btn-ghost btn-sm" onclick="window.deleteSecret('${escapeHtml(k.name)}','${name}')">×</button>` :
+                      `<button class="btn btn-ghost btn-sm" onclick="window.revealSecret('${escapeHtml(k.name)}','${name}')">👁</button>`
                     }
                   </td>
                 </tr>
@@ -1820,14 +1871,14 @@ async function loadAgentConfig(container, name) {
           if (isEditMode) {
             secretsHtml += `
               <div style="margin-top:12px;display:flex;gap:8px;">
-                <button class="btn btn-primary" onclick="saveSecrets('${name}')">💾 Save</button>
-                <button class="btn btn-ghost" onclick="cancelEdit('secrets')">↺ Revert</button>
+                <button class="btn btn-primary" onclick="window.saveSecretsLocal('${name}')">💾 Save</button>
+                <button class="btn btn-ghost" onclick="window._cancelEditLocal('secrets')">↺ Revert</button>
               </div>
             `;
           } else {
             secretsHtml += `
               <div style="margin-top:12px;">
-                <button class="btn btn-primary" onclick="enableEdit('secrets')">✏️ Edit</button>
+                <button class="btn btn-primary" onclick="window._enableEditLocal('secrets')">✏️ Edit</button>
               </div>
             `;
           }
@@ -1853,8 +1904,8 @@ async function loadAgentConfig(container, name) {
       if (isEditMode) {
         editControls = `
           <div style="margin-bottom:12px;display:flex;gap:8px;">
-            <button class="btn btn-primary" onclick="saveConfigForm('${name}','${catKey}')">💾 Save</button>
-            <button class="btn btn-ghost" onclick="cancelEdit('${catKey}')">↺ Revert</button>
+            <button class="btn btn-primary" onclick="window._saveConfigLocal('${name}','${catKey}')">💾 Save</button>
+            <button class="btn btn-ghost" onclick="window._cancelEditLocal('${catKey}')">↺ Revert</button>
           </div>
         `;
       }
@@ -2122,56 +2173,57 @@ function showCreateCronModal(profile) {
   });
 }
 
-function showEditCronModal(profile, jobId) {
+window.showEditCronModal = async function(profile, jobId) {
   // Fetch current job data
-  api('/api/hermes-cron/' + encodeURIComponent(profile)).then(function(res) {
-    if (!res.ok || !res.jobs) { showToast('Could not load job data', 'error'); return; }
-    const job = res.jobs.find(function(j) { return j.id === jobId; });
-    if (!job) { showToast('Job not found', 'error'); return; }
+  let res;
+  try { res = await api('/api/hermes-cron/' + encodeURIComponent(profile)); }
+  catch (e) { showToast('Could not load job data: ' + e.message, 'error'); return; }
 
-    var overlay = document.createElement('div');
-    overlay.className = 'modal-overlay';
-    overlay.style.display = 'flex';
-    overlay.innerHTML = '<div class="modal-card" style="width:500px;max-width:90vw;"><div class="modal-title">Edit Cron Job</div><form id="cron-edit-form"><div style="margin-bottom:12px;"><label style="font-size:11px;color:var(--fg-muted);display:block;margin-bottom:4px;">Name</label><input type="text" id="cron-edit-name" value="'+escapeHtml(job.name || '')+'" placeholder="e.g. Daily health check" style="width:100%;padding:8px 12px;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius);color:var(--fg);font-family:var(--font);font-size:12px;" /></div><div style="margin-bottom:12px;"><label style="font-size:11px;color:var(--fg-muted);display:block;margin-bottom:4px;">Schedule</label><div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px;"><button type="button" class="btn btn-ghost btn-sm cron-edit-preset" data-val="5m">5m</button><button type="button" class="btn btn-ghost btn-sm cron-edit-preset" data-val="15m">15m</button><button type="button" class="btn btn-ghost btn-sm cron-edit-preset" data-val="30m">30m</button><button type="button" class="btn btn-ghost btn-sm cron-edit-preset" data-val="1h">1h</button><button type="button" class="btn btn-ghost btn-sm cron-edit-preset" data-val="6h">6h</button><button type="button" class="btn btn-ghost btn-sm cron-edit-preset" data-val="12h">12h</button><button type="button" class="btn btn-ghost btn-sm cron-edit-preset" data-val="daily">daily</button></div><input type="text" id="cron-edit-schedule" value="'+escapeHtml(job.schedule || '')+'" placeholder="e.g. every 30m or 0 9 * * *" style="width:100%;padding:8px 12px;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius);color:var(--fg);font-family:var(--font);font-size:12px;" required /></div><div style="margin-bottom:12px;"><label style="font-size:11px;color:var(--fg-muted);display:block;margin-bottom:4px;">Prompt (task instruction)</label><textarea id="cron-edit-prompt" rows="3" placeholder="Check system health and report" style="width:100%;resize:vertical;font-family:var(--font);font-size:12px;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius);color:var(--fg);padding:8px;">'+escapeHtml(job.prompt || '')+'</textarea></div><div style="display:flex;gap:8px;margin-bottom:12px;"><div style="flex:1;"><label style="font-size:11px;color:var(--fg-muted);display:block;margin-bottom:4px;">Deliver</label><select id="cron-edit-deliver" class="log-level-select" style="width:100%;"><option value="origin">origin</option><option value="local">local</option><option value="telegram">telegram</option><option value="discord">discord</option><option value="slack">slack</option><option value="whatsapp">whatsapp</option><option value="signal">signal</option><option value="matrix">matrix</option><option value="mattermost">mattermost</option><option value="email">email</option><option value="sms">sms</option><option value="homeassistant">homeassistant</option><option value="dingtalk">dingtalk</option><option value="feishu">feishu</option><option value="wecom">wecom</option><option value="weixin">weixin</option><option value="bluebubbles">bluebubbles</option></select></div><div style="flex:1;"><label style="font-size:11px;color:var(--fg-muted);display:block;margin-bottom:4px;">Repeat</label><select id="cron-edit-repeat" class="log-level-select" style="width:100%;"><option value="">forever</option><option value="1">once</option><option value="5">5 times</option><option value="10">10 times</option><option value="50">50 times</option></select></div></div><div class="modal-actions"><button type="button" class="btn btn-ghost" id="cron-edit-cancel">Cancel</button><button type="submit" class="btn btn-primary">Save Changes</button></div></form></div>';
-    document.body.appendChild(overlay);
+  if (!res.ok || !res.jobs) { showToast('Could not load job data', 'error'); return; }
+  const job = res.jobs.find(j => j.id === jobId);
+  if (!job) { showToast('Job not found', 'error'); return; }
 
-    // Set deliver/repeat selects to current values
-    var deliver = job.deliver || 'origin';
-    var repeat = job.repeat !== undefined ? String(job.repeat) : '';
-    var delSel = overlay.querySelector('#cron-edit-deliver');
-    if (delSel) delSel.value = Array.from(delSel.options).some(function(o) { return o.value === deliver; }) ? deliver : 'origin';
-    var repSel = overlay.querySelector('#cron-edit-repeat');
-    if (repSel) repSel.value = Array.from(repSel.options).some(function(o) { return o.value === repeat; }) ? repeat : '';
+  var overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.style.display = 'flex';
+  overlay.innerHTML = '<div class="modal-card" style="width:500px;max-width:90vw;"><div class="modal-title">Edit Cron Job</div><form id="cron-edit-form"><div style="margin-bottom:12px;"><label style="font-size:11px;color:var(--fg-muted);display:block;margin-bottom:4px;">Name</label><input type="text" id="cron-edit-name" value="'+escapeHtml(job.name || '')+'" placeholder="e.g. Daily health check" style="width:100%;padding:8px 12px;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius);color:var(--fg);font-family:var(--font);font-size:12px;" /></div><div style="margin-bottom:12px;"><label style="font-size:11px;color:var(--fg-muted);display:block;margin-bottom:4px;">Schedule</label><div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px;"><button type="button" class="btn btn-ghost btn-sm cron-edit-preset" data-val="5m">5m</button><button type="button" class="btn btn-ghost btn-sm cron-edit-preset" data-val="15m">15m</button><button type="button" class="btn btn-ghost btn-sm cron-edit-preset" data-val="30m">30m</button><button type="button" class="btn btn-ghost btn-sm cron-edit-preset" data-val="1h">1h</button><button type="button" class="btn btn-ghost btn-sm cron-edit-preset" data-val="6h">6h</button><button type="button" class="btn btn-ghost btn-sm cron-edit-preset" data-val="12h">12h</button><button type="button" class="btn btn-ghost btn-sm cron-edit-preset" data-val="daily">daily</button></div><input type="text" id="cron-edit-schedule" value="'+escapeHtml(job.schedule || '')+'" placeholder="e.g. every 30m or 0 9 * *" style="width:100%;padding:8px 12px;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius);color:var(--fg);font-family:var(--font);font-size:12px;" required /></div><div style="margin-bottom:12px;"><label style="font-size:11px;color:var(--fg-muted);display:block;margin-bottom:4px;">Prompt (task instruction)</label><textarea id="cron-edit-prompt" rows="3" placeholder="Check system health and report" style="width:100%;resize:vertical;font-family:var(--font);font-size:12px;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius);color:var(--fg);padding:8px;">'+escapeHtml(job.prompt || '')+'</textarea></div><div style="display:flex;gap:8px;margin-bottom:12px;"><div style="flex:1;"><label style="font-size:11px;color:var(--fg-muted);display:block;margin-bottom:4px;">Deliver</label><select id="cron-edit-deliver" class="log-level-select" style="width:100%;"><option value="origin">origin</option><option value="local">local</option><option value="telegram">telegram</option><option value="discord">discord</option><option value="slack">slack</option><option value="whatsapp">whatsapp</option><option value="signal">signal</option><option value="matrix">matrix</option><option value="mattermost">mattermost</option><option value="email">email</option><option value="sms">sms</option><option value="homeassistant">homeassistant</option><option value="dingtalk">dingtalk</option><option value="feishu">feishu</option><option value="wecom">wecom</option><option value="weixin">weixin</option><option value="bluebubbles">bluebubbles</option></select></div><div style="flex:1;"><label style="font-size:11px;color:var(--fg-muted);display:block;margin-bottom:4px;">Repeat</label><select id="cron-edit-repeat" class="log-level-select" style="width:100%;"><option value="">forever</option><option value="1">once</option><option value="5">5 times</option><option value="10">10 times</option><option value="50">50 times</option></select></div></div><div class="modal-actions"><button type="button" class="btn btn-ghost" id="cron-edit-cancel">Cancel</button><button type="submit" class="btn btn-primary">Save Changes</button></div></form></div>';
+  document.body.appendChild(overlay);
 
-    overlay.querySelectorAll('.cron-edit-preset').forEach(function(btn) {
-      btn.addEventListener('click', function() {
-        document.getElementById('cron-edit-schedule').value = btn.dataset.val;
-        overlay.querySelectorAll('.cron-edit-preset').forEach(function(b) { b.classList.remove('active'); });
-        btn.classList.add('active');
+  var deliver = job.deliver || 'origin';
+  var repeat = job.repeat !== undefined ? String(job.repeat) : '';
+  var delSel = overlay.querySelector('#cron-edit-deliver');
+  if (delSel) delSel.value = Array.from(delSel.options).some(function(o) { return o.value === deliver; }) ? deliver : 'origin';
+  var repSel = overlay.querySelector('#cron-edit-repeat');
+  if (repSel) repSel.value = Array.from(repSel.options).some(function(o) { return o.value === repeat; }) ? repeat : '';
+
+  overlay.querySelectorAll('.cron-edit-preset').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      document.getElementById('cron-edit-schedule').value = btn.dataset.val;
+      overlay.querySelectorAll('.cron-edit-preset').forEach(function(b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+    });
+  });
+  overlay.querySelector('#cron-edit-cancel').addEventListener('click', function() { overlay.remove(); });
+  overlay.addEventListener('click', function(e) { if (e.target === overlay) overlay.remove(); });
+  overlay.querySelector('#cron-edit-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    var schedule = document.getElementById('cron-edit-schedule').value.trim();
+    var prompt = document.getElementById('cron-edit-prompt').value.trim();
+    var name = document.getElementById('cron-edit-name').value.trim();
+    var deliverVal = document.getElementById('cron-edit-deliver').value;
+    var repeatVal = document.getElementById('cron-edit-repeat').value;
+    if (!schedule) { showToast('Schedule required', 'error'); return; }
+    try {
+      var res2 = await api('/api/hermes-cron/' + encodeURIComponent(profile) + '/' + jobId, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': state.csrfToken || '' },
+        body: JSON.stringify({ schedule: schedule, prompt: prompt, name: name, deliver: deliverVal, repeat: repeatVal || undefined }),
       });
-    });
-    overlay.querySelector('#cron-edit-cancel').addEventListener('click', function() { overlay.remove(); });
-    overlay.addEventListener('click', function(e) { if (e.target === overlay) overlay.remove(); });
-    overlay.querySelector('#cron-edit-form').addEventListener('submit', async function(e) {
-      e.preventDefault();
-      var schedule = document.getElementById('cron-edit-schedule').value.trim();
-      var prompt = document.getElementById('cron-edit-prompt').value.trim();
-      var name = document.getElementById('cron-edit-name').value.trim();
-      var deliverVal = document.getElementById('cron-edit-deliver').value;
-      var repeatVal = document.getElementById('cron-edit-repeat').value;
-      if (!schedule) { showToast('Schedule required', 'error'); return; }
-      try {
-        var res = await api('/api/hermes-cron/' + encodeURIComponent(profile) + '/' + jobId, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': state.csrfToken || '' },
-          body: JSON.stringify({ schedule: schedule, prompt: prompt, name: name, deliver: deliverVal, repeat: repeatVal || undefined }),
-        });
-        if (res.ok) { showToast('Cron job updated', 'success'); overlay.remove(); setTimeout(function() { loadCronJobs(profile); }, 500); }
-        else { showToast(res.error || 'Update failed', 'error'); }
-      } catch (err) { showToast('Update failed: ' + err.message, 'error'); }
-    });
-  }).catch(function(e) { showToast('Could not load job data: ' + e.message, 'error'); });
-}
+      if (res2.ok) { showToast('Cron job updated', 'success'); overlay.remove(); setTimeout(function() { loadCronJobs(profile); }, 500); }
+      else { showToast(res2.error || 'Update failed', 'error'); }
+    } catch (err) { showToast('Update failed: ' + err.message, 'error'); }
+  });
+};
 
 
 async function loadUsage(container) {
@@ -4064,9 +4116,9 @@ function renderLogsPage(page) {
   `;
 }
 
-function changeLogsPage(page) {
+window.changeLogsPage = function(page) {
   renderLogsPage(page);
-}
+};
 
 window.toggleLogExpand = function(id) {
   const el = document.getElementById(id);
@@ -4304,13 +4356,17 @@ function renderConfigCategory(catKey) {
         return `<div class="stat-row"><span class="stat-label">${escapeHtml(k)}</span><span class="stat-value ${cls}">${escapeHtml(display)}</span></div>`;
       }).join('');
     }
+    // Edit button at TOP (not bottom)
+    const editBtn = `
+      <div style="margin-bottom:12px;">
+        <button class="btn btn-primary" onclick="window._enableEditLocal('${catKey}')">✏️ Edit ${categories.find(c => c.key === catKey)?.label || catKey}</button>
+      </div>
+    `;
     contentEl.innerHTML = `
       <div class="card">
-        <div class="card-title">${catKey}</div>
+        ${editBtn}
+        <div class="card-title">${categories.find(c => c.key === catKey)?.label || catKey}</div>
         ${rows}
-        <div style="margin-top:12px;">
-          <button class="btn btn-primary" onclick="window.enableEdit('${catKey}')">✏️ Edit</button>
-        </div>
       </div>
     `;
   }
