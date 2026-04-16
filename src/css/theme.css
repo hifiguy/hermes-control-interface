@@ -39,7 +39,7 @@
 [data-theme="light"] {
   --bg: #e4ebdf;
   --bg-base: #e4ebdf;
-  --bg-panel: rgba(11, 32, 31, 0.05);
+  --bg-panel: rgba(11, 32, 31, 0.08);
   --bg-panel-hover: rgba(11, 32, 31, 0.08);
   --bg-input: rgba(11, 32, 31, 0.04);
   --bg-card: rgba(255, 255, 255, 0.5);

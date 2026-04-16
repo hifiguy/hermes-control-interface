@@ -2255,6 +2255,51 @@ async function deleteUser(username) {
   }
 }
 
+async function createBackup() {
+  try {
+    showToast('Creating backup...', 'info');
+    const csrfToken = state.csrfToken || '';
+    const res = await api('/api/backup/create', { method: 'POST', headers: { 'X-CSRF-Token': csrfToken } });
+    if (res.ok && res.path) {
+      const a = document.createElement('a');
+      a.href = `/api/backup/download?path=${encodeURIComponent(res.path)}`;
+      a.download = res.filename || 'backup.zip';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      showToast('Backup downloaded', 'success');
+    } else {
+      showToast(res.error || 'Backup failed', 'error');
+    }
+  } catch (e) { showToast('Backup failed: ' + e.message, 'error'); }
+}
+
+async function importBackup(input) {
+  if (!input.files?.[0]) return;
+  const file = input.files[0];
+  if (!file.name.endsWith('.zip')) return showToast('Please select a .zip file', 'error');
+  if (!confirm('Import backup? This will restore data from the backup file.')) { input.value = ''; return; }
+  try {
+    showToast('Importing backup...', 'info');
+    const csrfToken = state.csrfToken || '';
+    const formData = new FormData();
+    formData.append('backup', file);
+    const res = await fetch('/api/backup/import', {
+      method: 'POST',
+      headers: { 'X-CSRF-Token': csrfToken },
+      body: formData,
+      credentials: 'include',
+    });
+    const data = await res.json();
+    if (data.ok) {
+      showToast('Backup imported successfully', 'success');
+    } else {
+      showToast(data.error || 'Import failed', 'error');
+    }
+  } catch (e) { showToast('Import failed: ' + e.message, 'error'); }
+  input.value = '';
+}
+
 async function loadAuth() {
   try {
     const res = await api('/api/auth/providers');

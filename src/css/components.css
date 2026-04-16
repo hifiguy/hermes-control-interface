@@ -1720,8 +1720,11 @@
   z-index: 9998;
   animation: fadeIn .15s;
 }
+[data-theme="light"] .modal-overlay {
+  background: rgba(0,0,0,0.3);
+}
 .modal-card {
-  background: var(--bg-panel);
+  background: var(--bg-base);
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 24px;
