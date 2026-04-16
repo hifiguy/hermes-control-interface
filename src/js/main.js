@@ -3075,7 +3075,11 @@ window.toggleLogsAutoRefresh = toggleLogsAutoRefresh;
 window.debounceLogsSearch = debounceLogsSearch;
 window.showCreateUser = showCreateUser;
 window.showEditUser = showEditUser;
-window.togglePwVis = togglePwVis;
+window.togglePwVis = function(btn) {
+  const input = btn.previousElementSibling;
+  if (input.type === 'password') { input.type = 'text'; btn.textContent = '🙈'; }
+  else { input.type = 'password'; btn.textContent = '👁'; }
+};
 window.applyPreset = applyPreset;
 window.sendChatMessage = sendChatMessage;
 window.loadChatSession = loadChatSession;
