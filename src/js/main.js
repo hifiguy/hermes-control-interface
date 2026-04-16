@@ -260,7 +260,6 @@ async function loadChat(container) {
       .chat-input-area { padding: 12px 16px; border-top: 1px solid var(--border); display: flex; gap: 8px; align-items: flex-end; background: var(--bg-base); }
       #chat-input { flex: 1; resize: none; max-height: 120px; padding: 10px 14px; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius); color: var(--fg); font-family: var(--font); font-size: 13px; outline: none; }
       #chat-input:focus { border-color: var(--fg); }
-      #chat-model { padding: 8px; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius); color: var(--fg); font-family: var(--font); font-size: 11px; }
       .chat-sidebar-backdrop { display: none; position: fixed; inset: 56px 0 0 0; background: rgba(0,0,0,0.5); z-index: 99; }
       .chat-sidebar-toggle { display: none; }
       @media (max-width: 768px) {
@@ -297,7 +296,6 @@ async function loadChat(container) {
             </div>
           </div>
           <div style="display:flex;gap:4px;align-items:center;">
-            <span class="badge" id="chat-model-badge" style="font-size:10px;">auto</span>
             <button class="btn btn-ghost btn-sm" onclick="renameChatSession()" title="Rename">✏</button>
             <button class="btn btn-ghost btn-sm btn-danger" onclick="deleteChatSession()" title="Delete">🗑</button>
           </div>
@@ -309,18 +307,12 @@ async function loadChat(container) {
           <span id="chat-status-elapsed"></span>
         </div>
         <div class="chat-input-area">
-          <select id="chat-model" style="width:160px;">
-            <option value="">auto</option>
-          </select>
           <textarea id="chat-input" placeholder="Type a message... (Enter to send)" rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChatMessage();}"></textarea>
           <button class="btn btn-primary" id="chat-send-btn" onclick="sendChatMessage()">Send</button>
         </div>
       </div>
     </div>
   `;
-
-  // Load models into selector
-  loadChatModels();
 
   // Set default profile
   const profileSelect = document.getElementById('chat-profile');
@@ -329,17 +321,8 @@ async function loadChat(container) {
   // Load sessions
   await refreshChatSidebar();
 
-  // Profile change → refresh sidebar + update model badge
-  profileSelect?.addEventListener('change', () => { refreshChatSidebar(); updateChatModelBadge(); });
-
-  // Populate model selector from session data
-  try {
-    const modelRes = await api('/api/model');
-    if (modelRes.ok && modelRes.model) {
-      const badge = document.getElementById('chat-model-badge');
-      if (badge) badge.textContent = modelRes.model;
-    }
-  } catch {}
+  // Profile change → refresh sidebar
+  profileSelect?.addEventListener('change', () => { refreshChatSidebar(); });
 
   // Session search
   document.getElementById('chat-session-search')?.addEventListener('input', (e) => {
@@ -407,18 +390,6 @@ async function refreshChatSidebar() {
         </div>
       </div>`;
     }).join('');
-  } catch {}
-}
-
-async function updateChatModelBadge() {
-  try {
-    const profile = document.getElementById('chat-profile')?.value || 'default';
-    const profFlag = profile !== 'default' ? `?profile=${encodeURIComponent(profile)}` : '';
-    const res = await api(`/api/model${profFlag}`);
-    if (res.ok && res.model) {
-      const badge = document.getElementById('chat-model-badge');
-      if (badge) badge.textContent = res.model;
-    }
   } catch {}
 }
 
@@ -569,8 +540,8 @@ function generateChatSessionId() {
 }
 
 function newChatSession() {
-  const newSessionId = generateChatSessionId();
-  state._currentChatSession = newSessionId;
+  // Option B: Don't generate session ID yet — let backend create it on first message
+  state._currentChatSession = null;
 
   // Reset UI
   const titleEl = document.getElementById('chat-title');
@@ -578,7 +549,7 @@ function newChatSession() {
   const subtitleEl = document.getElementById('chat-subtitle');
   if (subtitleEl) subtitleEl.textContent = '';
   const statusSessionEl = document.getElementById('chat-status-session');
-  if (statusSessionEl) statusSessionEl.textContent = newSessionId.slice(0, 20) + '...';
+  if (statusSessionEl) statusSessionEl.textContent = '—';
   const statusTokensEl = document.getElementById('chat-status-tokens');
   if (statusTokensEl) statusTokensEl.textContent = '';
   const messagesEl = document.getElementById('chat-messages');
@@ -591,7 +562,7 @@ function newChatSession() {
   `;
   document.querySelectorAll('.chat-session-item').forEach(el => el.classList.remove('active'));
 
-  return newSessionId;
+  return null;
 }
 
 function toggleChatSidebar() {
@@ -605,51 +576,6 @@ function toggleChatSidebar() {
   const backdrop = document.getElementById('chat-sidebar-backdrop');
   if (backdrop && window.innerWidth <= 768) {
     backdrop.style.display = state.chatSidebarOpen ? 'block' : 'none';
-  }
-}
-
-async function loadChatModels() {
-  const select = document.getElementById('chat-model');
-  if (!select) return;
-
-  try {
-    const res = await api('/api/models');
-    if (!res.ok) return;
-
-    // Clear existing
-    select.innerHTML = '<option value="">auto (default)</option>';
-
-    // Add models from groups
-    if (res.groups) {
-      res.groups.forEach(group => {
-        const optgroup = document.createElement('optgroup');
-        optgroup.label = group.provider;
-        group.models?.forEach(model => {
-          const opt = document.createElement('option');
-          opt.value = model;
-          opt.textContent = model;
-          if (model === res.default) opt.selected = true;
-          optgroup.appendChild(opt);
-        });
-        if (optgroup.children.length > 0) select.appendChild(optgroup);
-      });
-    }
-
-    // Flat fallback
-    if (!res.groups || res.groups.length === 0) {
-      if (res.models) {
-        res.models.forEach(m => {
-          if (m.value && m.value !== 'unknown') {
-            const opt = document.createElement('option');
-            opt.value = m.value;
-            opt.textContent = `${m.label}: ${m.value}`;
-            select.appendChild(opt);
-          }
-        });
-      }
-    }
-  } catch (e) {
-    console.error('Failed to load models:', e);
   }
 }
 
@@ -684,8 +610,8 @@ async function sendChatMessage() {
   const text = input?.value?.trim();
   if (!text) return;
   const profile = document.getElementById('chat-profile')?.value || 'default';
-  const model = document.getElementById('chat-model')?.value || '';
-  const sessionId = state._currentChatSession || 0;
+  // Option B: Only send sessionId if it exists (resume), otherwise let backend create new session
+  const sessionId = state._currentChatSession || null;
   input.value = '';
   input.style.height = 'auto';
   state._chatLock = true;
@@ -707,7 +633,11 @@ async function sendChatMessage() {
   let fullContent = '';
   let startTime = Date.now();
   try {
-    const body = JSON.stringify({ message: text, profile, sessionId, model });
+    // Only include sessionId in body if it exists (for resume)
+    const bodyObj = { message: text, profile };
+    if (model) bodyObj.model = model;
+    if (sessionId) bodyObj.sessionId = sessionId;
+    const body = JSON.stringify(bodyObj);
     const response = await fetch('/api/chat/send', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': state.csrfToken || '' }, credentials: 'include', body });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const reader = response.body.getReader();
@@ -4416,7 +4346,6 @@ window.loadChatSession = loadChatSession;
 window.refreshChatSidebar = refreshChatSidebar;
 window.newChatSession = newChatSession;
 window.toggleChatSidebar = toggleChatSidebar;
-window.loadChatModels = loadChatModels;
 window.renameChatSession = renameChatSession;
 window.deleteChatSession = deleteChatSession;
 window.loadLogs = loadLogs;
