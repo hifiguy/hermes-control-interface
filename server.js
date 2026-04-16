@@ -548,6 +548,19 @@ const loginRateLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// Terminal exec rate limiter — 30 commands/minute per IP
+const terminalRateLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 30, // 30 commands per minute per IP
+  keyGenerator: (req) => getClientIp(req),
+  handler: (req, res) => {
+    log('terminal.rate_limited', `ip ${getClientIp(req)}`);
+    res.status(429).json({ ok: false, error: 'too many terminal commands, slow down' });
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 function formatBytes(bytes) {
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
   let idx = 0;
@@ -1375,6 +1388,15 @@ const {
   loadNotifications, addNotification, dismissNotification, clearNotifications,
 } = require('./auth');
 
+// Periodic cleanup of expired auth tokens (every 15 minutes)
+setInterval(() => {
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  for (const [k] of tokenToUser) {
+    const [t] = k.split('.');
+    if (Number(t) < cutoff) tokenToUser.delete(k);
+  }
+}, 15 * 60 * 1000);
+
 // Track current user in request (bound to token)
 const tokenToUser = new Map(); // token -> { username, role }
 
@@ -1383,13 +1405,6 @@ function createAuthToken(username, role, permissions) {
   const sig = hmac(ts + ':' + username);
   const token = ts + '.' + sig;
   tokenToUser.set(token, { username, role, permissions });
-  // Clean old tokens periodically
-  if (tokenToUser.size > 100) {
-    for (const [k] of tokenToUser) {
-      const [t] = k.split('.');
-      if (Date.now() - Number(t) > 24 * 60 * 60 * 1000) tokenToUser.delete(k);
-    }
-  }
   return token;
 }
 
@@ -2156,7 +2171,7 @@ app.post('/api/terminal/ensure', requireAuth, (req, res) => {
   }
 });
 
-app.post('/api/terminal/exec', requireAuth, requireCsrf, requirePerm('terminal.exec'), async (req, res) => {
+app.post('/api/terminal/exec', terminalRateLimiter, requireAuth, requireCsrf, requirePerm('terminal.exec'), async (req, res) => {
   const command = String(req.body?.command || '').trim();
   if (!command) return res.status(400).json({ error: 'command required' });
   if (command.length > 4096) return res.status(400).json({ error: 'command too long (max 4096 chars)' });
