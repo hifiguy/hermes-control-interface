@@ -260,21 +260,30 @@ async function loadChat(container) {
 
 async function loadChatSidebar() {
   const profile = document.getElementById('chat-profile')?.value || 'default';
-  let html = `<div class="session-item" onclick="loadChatSession(0)" style="padding:8px 12px;cursor:pointer;">
-    <div style="font-size:13px;">New Chat</div>
-    <div style="font-size:11px;color:var(--fg-subtle);">0 messages</div>
+  let html = `<div style="padding:10px 12px;cursor:pointer;border-bottom:1px solid var(--border);" onclick="newChatSession()">
+    <div style="font-size:13px;color:var(--fg);font-weight:500;">+ New Chat</div>
   </div>`;
   try {
     const res = await fetch(`/api/all-sessions?profile=${encodeURIComponent(profile)}`, { credentials: 'include' });
     if (res.ok) {
       const data = await res.json();
       if (data.sessions && data.sessions.length > 0) {
-        html = data.sessions.map(s => `
-          <div class="session-item" onclick="loadChatSession(${s.id})" style="padding:8px 12px;cursor:pointer;">
-            <div style="font-size:13px;">${s.title || 'Chat ' + s.id} ${s.id === 0 ? '' : '(' + s.messageCount + ' messages)'}</div>
-            <div style="font-size:11px;color:var(--fg-subtle);">${s.messageCount} messages</div>
-          </div>
-        `).join('');
+        const filtered = data.sessions.filter(s => (s.messageCount > 0) || (s.title && s.title !== '—'));
+        html = `<div style="padding:10px 12px;cursor:pointer;border-bottom:1px solid var(--border);" onclick="newChatSession()">
+          <div style="font-size:13px;color:var(--fg);font-weight:500;">+ New Chat</div>
+        </div>` + filtered.slice(0, 50).map(s => {
+          const title = (s.title && s.title !== '—') ? s.title : s.preview?.substring(0, 40) || s.id;
+          const time = s.lastActive || '';
+          return `<div style="padding:10px 12px;cursor:pointer;border-bottom:1px solid var(--border);" onclick="loadChatSession('${s.id}')">
+            <div style="font-size:12px;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:400;">${escapeHtml(title.substring(0, 45))}</div>
+            <div style="font-size:10px;color:var(--fg-subtle);margin-top:3px;display:flex;justify-content:space-between;">
+              <span>${s.messageCount || 0} msgs</span><span>${time}</span>
+            </div>
+          </div>`;
+        }).join('');
+        if (filtered.length === 0) {
+          html += '<div style="text-align:center;color:var(--fg-subtle);padding:20px;font-size:12px;">No conversations yet</div>';
+        }
       }
     }
   } catch (e) {}
@@ -2335,26 +2344,77 @@ async function showCreateAgent() {
 }
 
 async function showCreateUser() {
-  const result = await showModal({
-    title: 'Create User',
-    message: 'Create a new HCI user account.',
-    inputs: [
-      { placeholder: 'Username' },
-      { placeholder: 'Password (min 8 chars)', type: 'password' },
-      { placeholder: 'Role (admin/viewer)', value: 'viewer' },
-    ],
-    buttons: [
-      { text: 'Cancel', value: null },
-      { text: 'Create', primary: true, value: 'ok' },
-    ],
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  overlay.innerHTML = `
+    <div class="modal-card" style="max-width:550px;max-height:85vh;overflow-y:auto;">
+      <div class="modal-title">Create User</div>
+      <form id="create-user-form">
+        <div style="margin-bottom:10px;">
+          <label style="font-size:11px;color:var(--fg-muted);display:block;margin-bottom:4px;">Username</label>
+          <input class="modal-input" name="username" placeholder="e.g. bayendor" autocomplete="off" required />
+        </div>
+        <div style="margin-bottom:10px;">
+          <label style="font-size:11px;color:var(--fg-muted);display:block;margin-bottom:4px;">Password</label>
+          <div style="position:relative;">
+            <input class="modal-input" name="password" type="password" placeholder="Min 8 characters" autocomplete="new-password" required style="padding-right:36px;" />
+            <button type="button" onclick="togglePwVis(this)" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--fg-muted);cursor:pointer;font-size:14px;">👁</button>
+          </div>
+        </div>
+        <div style="margin-bottom:10px;">
+          <label style="font-size:11px;color:var(--fg-muted);display:block;margin-bottom:4px;">Confirm Password</label>
+          <div style="position:relative;">
+            <input class="modal-input" name="confirm" type="password" placeholder="Re-enter password" autocomplete="new-password" required style="padding-right:36px;" />
+            <button type="button" onclick="togglePwVis(this)" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--fg-muted);cursor:pointer;font-size:14px;">👁</button>
+          </div>
+          <div id="pw-match-msg" style="font-size:11px;margin-top:4px;min-height:16px;"></div>
+        </div>
+        <div style="font-size:10px;color:var(--fg-subtle);margin-bottom:10px;padding:6px 8px;background:var(--bg-input);border-radius:var(--radius);">Password rules: min 8 chars, no spaces</div>
+        <div style="margin-bottom:10px;">
+          <label style="font-size:11px;color:var(--fg-muted);display:block;margin-bottom:6px;">Role</label>
+          <div style="display:flex;gap:6px;">
+            <button type="button" class="btn btn-ghost btn-sm" onclick="this.closest('form').querySelector('[name=role]').value='admin'">Admin</button>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="this.closest('form').querySelector('[name=role]').value='viewer'">Viewer</button>
+          </div>
+          <input type="hidden" name="role" value="viewer" />
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create User</button>
+        </div>
+      </form>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  // Password match check
+  const form = overlay.querySelector('#create-user-form');
+  const pwInput = form.querySelector('[name=password]');
+  const confInput = form.querySelector('[name=confirm]');
+  const msgEl = overlay.querySelector('#pw-match-msg');
+  const checkMatch = () => {
+    if (!confInput.value) { msgEl.textContent = ''; return; }
+    msgEl.textContent = pwInput.value === confInput.value ? '✓ Passwords match' : '✗ Passwords do not match';
+    msgEl.style.color = pwInput.value === confInput.value ? 'var(--green)' : 'var(--red)';
+  };
+  pwInput.addEventListener('input', checkMatch);
+  confInput.addEventListener('input', checkMatch);
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const username = (fd.get('username') || '').trim();
+    const password = fd.get('password') || '';
+    const confirm = fd.get('confirm') || '';
+    const role = fd.get('role') || 'viewer';
+    if (!username) return showToast('Username required', 'error');
+    if (password.length < 8) return showToast('Password must be at least 8 chars', 'error');
+    if (password !== confirm) return showToast('Passwords do not match', 'error');
+    if (/\s/.test(password)) return showToast('Password cannot contain spaces', 'error');
+    createUser(username, password, role);
+    overlay.remove();
   });
-  if (!result || result.action === null) return;
-  const [username, password, role] = result.inputs;
-  if (!username || !password || !role) {
-    await customAlert('All fields required', 'Error');
-    return;
-  }
-  createUser(username, password, role);
 }
 
 async function createUser(username, password, role) {
