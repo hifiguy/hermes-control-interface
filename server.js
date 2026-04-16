@@ -337,6 +337,33 @@ app.post('/api/chat/send', requireAuth, requirePerm('sessions.messages'), async 
     res.end();
   }
 });
+
+// ── Model Info — read from config.yaml ──
+app.get('/api/models', requireAuth, async (req, res) => {
+  try {
+    const configPath = path.join(os.homedir(), '.hermes', 'config.yaml');
+    const configContent = await fs.promises.readFile(configPath, 'utf-8');
+    const config = yaml.load(configContent) || {};
+    
+    const modelConfig = config.model || {};
+    const defaultModel = modelConfig.default || 'unknown';
+    const provider = modelConfig.provider || 'unknown';
+    
+    // Return single model info (hermes doesn't expose full model list via CLI)
+    res.json({
+      ok: true,
+      default: defaultModel,
+      provider: provider,
+      groups: [{
+        provider: provider,
+        models: [defaultModel]
+      }]
+    });
+  } catch (e) {
+    res.json({ ok: false, error: e.message, groups: [], default: 'auto' });
+  }
+});
+
 // Log streaming state
 let logStream = { proc: null, type: null, level: null, clients: new Set() };
 let hermesSidebarSessionsCache = { at: 0, data: [] };

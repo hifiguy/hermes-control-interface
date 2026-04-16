@@ -557,9 +557,15 @@ function renderChatMessage(msg) {
 
 function generateChatSessionId() {
   const now = new Date();
-  const ts = now.toISOString().replace(/[-:T]/g, '_').slice(0, 15);
+  // Format: YYYYMMDD_HHMMSS_RAND (matches hermes CLI session ID format)
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const hours = String(now.getHours()).padStart(2, '0');
+  const mins = String(now.getMinutes()).padStart(2, '0');
+  const secs = String(now.getSeconds()).padStart(2, '0');
   const rand = Math.random().toString(36).slice(2, 6);
-  return `${ts}_${rand}`;
+  return `${year}${month}${day}_${hours}${mins}${secs}_${rand}`;
 }
 
 function newChatSession() {
