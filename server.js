@@ -2863,7 +2863,7 @@ app.post('/api/skills/uninstall', requireRole('admin'), async (req, res) => {
     const { skill, profile } = req.body || {};
     if (!skill) return res.status(400).json({ ok: false, error: 'skill name required' });
     const profArg = profile ? ['-p', sanitizeProfileName(profile)] : [];
-    const output = await execHermes([...profArg, 'skills', 'uninstall', skill, '--yes'], 15000);
+    const output = await shell(`echo y | hermes ${profile ? `-p ${sanitizeProfileName(profile)} ` : ''}skills uninstall ${skill} 2>&1`, 15000);
     res.json({ ok: true, output });
   } catch (e) {
     res.json({ ok: false, error: e.message });

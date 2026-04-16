@@ -1256,8 +1256,29 @@ window.checkSkillUpdates = async function(profile) {
         html += '</div>';
         await showModal({ title: 'Skill Updates', message: html, buttons: [{ text: 'Close', primary: true }] });
       }
-    } else {
+    } else if (!res.ok) {
       await customAlert(res.error || 'Check failed', 'Error');
+    } else if (res.output && res.output.includes('unavailable')) {
+      // Skills exist but source is unavailable — not an error, show info
+      await customAlert('Some installed skills could not be checked (source unavailable). This does not indicate an update is needed.', 'Skill Updates');
+    } else if (!res.output || res.output.includes('0 update') || res.output.includes('up to date')) {
+      await customAlert('All skills are up to date!', 'Skill Updates');
+    } else {
+      // Has updates
+      const updates = parseSkillTable(res.output);
+      let html = '<div style="max-height:400px;overflow-y:auto;">';
+      for (const u of updates) {
+        const statusColor = u.trust === 'up_to_date' ? 'var(--green)' : 'var(--amber)';
+        html += `<div style="padding:8px;border-bottom:1px solid var(--border);">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <span style="font-weight:600;color:var(--fg);">${escapeHtml(u.name)}</span>
+            <span style="color:${statusColor};font-size:11px;">${escapeHtml(u.trust || u.source)}</span>
+          </div>
+          <div style="font-size:11px;color:var(--fg-muted);margin-top:2px;">${escapeHtml(u.source)} — ${escapeHtml(u.description)}</div>
+        </div>`;
+      }
+      html += '</div>';
+      await showModal({ title: 'Skill Updates', message: html, buttons: [{ text: 'Close', primary: true }] });
     }
   } catch (e) { showToast(e.message, 'error'); }
 }
