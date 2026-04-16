@@ -1,7 +1,7 @@
 # HCI Security Audit Report
 
 **Project:** Hermes Control Interface (HCI)
-**Version:** 3.2.0
+**Version:** 3.3.0
 **Audit Date:** 2026-04-17
 **Auditor:** Hermes Orchestrator
 **Repository:** https://github.com/xaspx/hermes-control-interface
@@ -46,7 +46,7 @@ el.innerHTML = `
 `;
 ```
 
-**Status:** Should be fixed before production open-source release.
+**Status:** Fixed in v3.3.0 (commit b6e931c). All dynamic values now escaped with `escapeHtml()`.
 
 ---
 
@@ -66,7 +66,7 @@ app.get('/api/plugins', requireAuth, (req, res) => { ... })
 app.get('/api/plugins', requireRole('admin'), (req, res) => { ... })
 ```
 
-**Status:** Should be admin-only. Quick fix.
+**Status:** Fixed in v3.3.0 (commit b6e931c). `requireRole('admin')` added to `GET /api/plugins`.
 
 ---
 
@@ -87,7 +87,7 @@ const terminalRateLimiter = rateLimit({
 app.post('/api/terminal/exec', terminalRateLimiter, requireAuth, requireCsrf, requirePerm('terminal.exec'), async (req, res) => { ... });
 ```
 
-**Status:** Recommend adding.
+**Status:** Fixed in v3.3.0 (commit bb10c51). `terminalRateLimiter` added: 30 commands/minute per IP.
 
 ---
 
@@ -135,7 +135,7 @@ setInterval(() => {
 }, 60 * 60 * 1000); // Run every hour
 ```
 
-**Status:** Recommend fixing for proper session lifecycle management.
+**Status:** Fixed in v3.3.0 (commit bb10c51). `setInterval()` added every 15 minutes to clean up expired tokens.
 
 ---
 

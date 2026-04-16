@@ -3240,7 +3240,7 @@ async function showCreateUser() {
       <form id="create-user-form">
         <div style="margin-bottom:10px;">
           <label style="font-size:11px;color:var(--fg-muted);display:block;margin-bottom:4px;">Username</label>
-          <input class="modal-input" name="username" placeholder="e.g. bayendor" autocomplete="off" required />
+          <input class="modal-input" name="username" placeholder="e.g. alice" autocomplete="off" required />
         </div>
         <div style="margin-bottom:10px;">
           <label style="font-size:11px;color:var(--fg-muted);display:block;margin-bottom:4px;">Password</label>
