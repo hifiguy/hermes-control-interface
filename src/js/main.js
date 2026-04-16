@@ -229,170 +229,274 @@ async function loadPage(page, params = {}) {
 // Chat Functions
 // ============================================
 async function loadChat(container) {
+  // Load profiles for dropdown
+  let profiles = [];
+  try {
+    const pRes = await api('/api/profiles');
+    if (pRes.ok) profiles = pRes.profiles || [];
+  } catch {}
+  const profileOptions = profiles.map(p => `<option value="${p.name}">${p.name}${p.active ? ' ★' : ''}</option>`).join('');
+  const defaultProfile = profiles.find(p => p.active)?.name || 'default';
+
   container.innerHTML = `
-    <div class="chat-sidebar" id="chat-sidebar">
-      ${await loadChatSidebar()}
-    </div>
-    <div class="chat-main" id="chat-main">
-      <div class="chat-header" id="chat-header">
-        <div class="chat-title" id="chat-title">New Chat</div>
-        <div class="chat-status" id="chat-status-session">—</div>
-        <div class="chat-status-elapsed" id="chat-status-elapsed"></div>
-        <div style="display:flex;gap:4px;">
-          <button class="btn btn-ghost btn-sm" onclick="newChatSession()" title="New Chat">+ New</button>
-          <button class="btn btn-ghost btn-sm" onclick="renameChatSession()" title="Rename">✏ Rename</button>
-          <button class="btn btn-danger btn-sm" onclick="deleteChatSession()" title="Delete">✕ Delete</button>
+    <div class="chat-layout">
+      <div class="chat-sidebar" id="chat-sidebar">
+        <div class="chat-sidebar-header">
+          <select id="chat-profile" class="modal-input" style="width:100%;margin:0;padding:8px;">
+            ${profileOptions || '<option value="default">default</option>'}
+          </select>
+          <input type="text" id="chat-session-search" class="search-input" placeholder="Search sessions..." style="margin-top:6px;" />
+          <button class="btn btn-primary btn-sm" style="width:100%;margin-top:6px;" onclick="newChatSession()">+ New Chat</button>
+        </div>
+        <div class="chat-sidebar-list" id="chat-sidebar-list">
+          <div class="loading">Loading sessions...</div>
         </div>
       </div>
-      <div class="chat-messages" id="chat-messages"></div>
-      <div class="chat-input-area" id="chat-input-area">
-        <select id="chat-profile" onchange="loadChatSidebar()" style="width:120px;">
-          <option value="default">default</option>
-        </select>
-        <select id="chat-model" style="width:180px;">
-          <option value="">auto</option>
-        </select>
-        <input id="chat-input" placeholder="Type a message…" onkeydown="if(event.key==='Enter')sendChatMessage()" />
-        <button class="btn btn-primary" id="chat-send-btn" onclick="sendChatMessage()">Send</button>
+      <div class="chat-main">
+        <div class="chat-header" id="chat-header">
+          <div>
+            <div class="chat-title" id="chat-title">New Chat</div>
+            <div class="chat-subtitle" id="chat-subtitle"></div>
+          </div>
+          <div style="display:flex;gap:4px;align-items:center;">
+            <span class="badge" id="chat-model-badge" style="font-size:10px;">auto</span>
+            <button class="btn btn-ghost btn-sm" onclick="renameChatSession()" title="Rename">✏</button>
+            <button class="btn btn-ghost btn-sm btn-danger" onclick="deleteChatSession()" title="Delete">🗑</button>
+          </div>
+        </div>
+        <div class="chat-messages" id="chat-messages"></div>
+        <div class="chat-status-bar" id="chat-status-bar">
+          <span id="chat-status-session">—</span>
+          <span id="chat-status-tokens"></span>
+          <span id="chat-status-elapsed"></span>
+        </div>
+        <div class="chat-input-area">
+          <select id="chat-model" style="width:160px;">
+            <option value="">auto</option>
+          </select>
+          <textarea id="chat-input" placeholder="Type a message... (Enter to send)" rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChatMessage();}"></textarea>
+          <button class="btn btn-primary" id="chat-send-btn" onclick="sendChatMessage()">Send</button>
+        </div>
       </div>
     </div>
   `;
-  loadChatSession(0);
+
+  // Set default profile
+  const profileSelect = document.getElementById('chat-profile');
+  if (profileSelect) profileSelect.value = defaultProfile;
+
+  // Load sessions
+  await refreshChatSidebar();
+
+  // Profile change → refresh sidebar
+  profileSelect?.addEventListener('change', refreshChatSidebar);
+
+  // Session search
+  document.getElementById('chat-session-search')?.addEventListener('input', (e) => {
+    const q = e.target.value.toLowerCase();
+    document.querySelectorAll('#chat-sidebar-list .chat-session-item').forEach(el => {
+      el.style.display = el.dataset.title?.toLowerCase().includes(q) || el.dataset.sid?.toLowerCase().includes(q) ? '' : 'none';
+    });
+  });
+
+  // Auto-resize textarea
+  const textarea = document.getElementById('chat-input');
+  if (textarea) {
+    textarea.addEventListener('input', () => {
+      textarea.style.height = 'auto';
+      textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
+    });
+  }
+
+  // Welcome message
+  document.getElementById('chat-messages').innerHTML = `
+    <div style="text-align:center;color:var(--fg-subtle);padding:80px 20px;">
+      <div style="font-size:32px;margin-bottom:16px;">💬</div>
+      <div style="font-size:16px;margin-bottom:8px;color:var(--fg);">Welcome to Chat</div>
+      <div style="font-size:13px;">Select a conversation or start a new one</div>
+    </div>
+  `;
 }
 
-async function loadChatSidebar() {
+async function refreshChatSidebar() {
   const profile = document.getElementById('chat-profile')?.value || 'default';
-  let html = `<div style="padding:10px 12px;cursor:pointer;border-bottom:1px solid var(--border);" onclick="newChatSession()">
-    <div style="font-size:13px;color:var(--fg);font-weight:500;">+ New Chat</div>
-  </div>`;
+  const listEl = document.getElementById('chat-sidebar-list');
+  if (!listEl) return;
+  listEl.innerHTML = '<div class="loading">Loading...</div>';
+
   try {
     const res = await fetch(`/api/all-sessions?profile=${encodeURIComponent(profile)}`, { credentials: 'include' });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.sessions && data.sessions.length > 0) {
-        const filtered = data.sessions.filter(s => (s.messageCount > 0) || (s.message_count > 0) || (s.title && s.title !== '—'));
-        html = `<div style="padding:10px 12px;cursor:pointer;border-bottom:1px solid var(--border);" onclick="newChatSession()">
-          <div style="font-size:13px;color:var(--fg);font-weight:500;">+ New Chat</div>
-        </div>` + filtered.slice(0, 50).map(s => {
-          const title = (s.title && s.title !== '—') ? s.title : s.preview?.substring(0, 40) || s.id;
-          const time = s.lastActive || '';
-          return `<div style="padding:10px 12px;cursor:pointer;border-bottom:1px solid var(--border);" onclick="loadChatSession('${s.id}')">
-            <div style="font-size:12px;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:400;">${escapeHtml(title.substring(0, 45))}</div>
-            <div style="font-size:10px;color:var(--fg-subtle);margin-top:3px;display:flex;justify-content:space-between;">
-              <span>${s.messageCount || 0} msgs</span><span>${time}</span>
-            </div>
-          </div>`;
-        }).join('');
-        if (filtered.length === 0) {
-          html += '<div style="text-align:center;color:var(--fg-subtle);padding:20px;font-size:12px;">No conversations yet</div>';
-        }
-      }
+    if (!res.ok) { listEl.innerHTML = '<div class="error-msg">Failed to load</div>'; return; }
+    const data = await res.json();
+    const sessions = (data.sessions || []).filter(s => (s.messageCount > 0) || (s.message_count > 0) || (s.title && s.title !== '—'));
+
+    if (sessions.length === 0) {
+      listEl.innerHTML = '<div style="text-align:center;color:var(--fg-subtle);padding:20px;font-size:12px;">No conversations yet</div>';
+      return;
     }
-  } catch (e) {}
-  const sidebar = document.getElementById('chat-sidebar');
-  if (sidebar) sidebar.innerHTML = html;
+
+    const currentSid = state._currentChatSession;
+    listEl.innerHTML = sessions.slice(0, 50).map(s => {
+      const title = (s.title && s.title !== '—') ? s.title : s.id;
+      const isActive = s.id == currentSid;
+      return `<div class="chat-session-item ${isActive ? 'active' : ''}" data-sid="${s.id}" data-title="${escapeHtml(title)}" onclick="loadChatSession('${s.id}')">
+        <div class="chat-session-title">${escapeHtml(title.substring(0, 40))}</div>
+        <div class="chat-session-meta">
+          <span>${s.messageCount || s.message_count || 0} msgs</span>
+          <span>${s.source || ''}</span>
+        </div>
+      </div>`;
+    }).join('');
+  } catch {}
 }
 
 async function loadChatSession(sessionId) {
   const profile = document.getElementById('chat-profile')?.value || 'default';
   const container = document.getElementById('chat-messages');
-  const n = document.getElementById('chat-title');
-  const stats = document.getElementById('chat-status-session');
+  const titleEl = document.getElementById('chat-title');
+  const subtitleEl = document.getElementById('chat-subtitle');
+  const statsEl = document.getElementById('chat-status-session');
+  const tokensEl = document.getElementById('chat-status-tokens');
   if (!container) return;
   state._currentChatSession = sessionId || 0;
-  if (stats) stats.textContent = sessionId || '—';
-  container.innerHTML = '<div class="loading">Loading messages</div>';
+  if (statsEl) statsEl.textContent = sessionId || '—';
+  container.innerHTML = '<div class="loading">Loading messages...</div>';
+
+  // Highlight active in sidebar
+  document.querySelectorAll('.chat-session-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.sid == sessionId);
+  });
+
   try {
     const r = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/messages?profile=${encodeURIComponent(profile)}`, { credentials: 'include' });
     if (!r.ok) { container.innerHTML = '<div class="error-msg">Failed to load messages</div>'; return; }
-    const i = await r.json();
-    if (n) n.textContent = i.title || ('Chat ' + sessionId);
-    if (!i.messages || i.messages.length === 0) { container.innerHTML = '<div style="text-align:center;color:var(--fg-subtle);padding:40px;font-size:13px;">No messages in this session yet</div>'; return; }
+    const data = await r.json();
+    if (titleEl) titleEl.textContent = data.title || ('Session ' + sessionId);
+    if (subtitleEl) subtitleEl.textContent = `${data.messages?.length || 0} messages · ${profile}`;
+
+    // Token info
+    if (tokensEl && data.session) {
+      const tokens = (data.session.input_tokens || 0) + (data.session.output_tokens || 0);
+      tokensEl.textContent = tokens > 0 ? formatNumber(tokens) + ' tokens' : '';
+    }
+
+    if (!data.messages || data.messages.length === 0) {
+      container.innerHTML = '<div style="text-align:center;color:var(--fg-subtle);padding:40px;font-size:13px;">No messages yet</div>';
+      return;
+    }
+
     container.innerHTML = '';
-    for (const m of i.messages) Fu(container, m);
+    for (const m of data.messages) {
+      container.appendChild(renderChatMessage(m));
+    }
     container.scrollTop = container.scrollHeight;
-  } catch (e) { container.innerHTML = '<div class="error-msg">' + Z(e.message) + '</div>'; }
-}
-
-function Fu(p, t) {
-  const n = t.role || 'unknown';
-  const r = { user: { bg: 'var(--accent-dim)', border: 'var(--accent)' }, assistant: { bg: 'var(--bg-card)', border: 'var(--green, #4ade80)' }, tool: { bg: 'rgba(251,146,60,0.08)', border: '#fb923c' }, tool_result: { bg: 'rgba(251,146,60,0.08)', border: '#fb923c' }, system: { bg: 'rgba(156,163,175,0.08)', border: '#9ca3af' } };
-  const i = r[n] || r.system;
-  const a = document.createElement('div');
-  a.style.cssText = 'margin-bottom:8px;padding:10px 12px;border-radius:8px;background:' + i.bg + ';border-left:3px solid ' + i.border + ';';
-  const o = t.timestamp ? new Date(t.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
-  if (o) { const d = document.createElement('div'); d.style.cssText = 'font-size:10px;color:var(--fg-subtle);margin-bottom:4px;'; d.textContent = o; a.appendChild(d); }
-  const e = document.createElement('div');
-  let s = t.content || '';
-  s = s.replace(/\u256d\u2500+[\\s\\S]*?\u2570\u2500+[^]*?\u256f/g, '');
-  s = s.replace(/Resume this session with:.*$/gm, '');
-  s = s.replace(/^Session:\\s*\\d+.*$/gm, '');
-  s = s.replace(/^Duration:.*$/gm, '');
-  s = s.replace(/^Messages:.*$/gm, '');
-  s = s.replace(/^Query:.*$/gm, '');
-  s = s.replace(/^Initializing agent\\.\\.\\..*$/gm, '');
-  s = s.replace(/^-{10,}$/gm, '');
-  s = s.trim();
-  if (s.includes('\\n\\n')) {
-    const parts = s.split('\\n\\n').filter(p => p.trim());
-    parts.forEach((part, idx) => {
-      const div = document.createElement('div');
-      div.style.cssText = 'margin-bottom:4px;font-size:13px;line-height:1.6;color:var(--fg);';
-      if (idx === 0 && part.startsWith('```json') && part.endsWith('```')) {
-        try {
-          const parsed = JSON.parse(part.replace(/```json/, '').replace(/```/, '').trim());
-          const pre = document.createElement('pre');
-          pre.style.cssText = 'background:var(--bg-panel);padding:8px;border-radius:4px;overflow-x:auto;font-size:11px;color:var(--fg);white-space:pre-wrap;';
-          pre.textContent = JSON.stringify(parsed, null, 2);
-          div.appendChild(pre);
-        } catch (err) { div.textContent = part; }
-      } else {
-        div.textContent = part;
-      }
-      e.appendChild(div);
-    });
-  } else {
-    e.style.cssText = 'font-size:13px;line-height:1.6;color:var(--fg);';
-    e.textContent = s;
+  } catch (e) {
+    container.innerHTML = '<div class="error-msg">' + escapeHtml(e.message) + '</div>';
   }
-  a.appendChild(e);
-  p.appendChild(a);
 }
 
-async function newChatSession() {
-  const container = document.getElementById('page-chat');
-  if (!container) return;
+function renderChatMessage(msg) {
+  const role = msg.role || 'unknown';
+  const colors = {
+    user: { bg: 'var(--accent-dim)', border: 'var(--accent)', label: 'You' },
+    assistant: { bg: 'var(--bg-card)', border: 'var(--green, #4ade80)', label: 'Assistant' },
+    tool: { bg: 'rgba(251,146,60,0.06)', border: '#fb923c', label: 'Tool Call' },
+    tool_result: { bg: 'rgba(251,146,60,0.06)', border: '#fb923c', label: 'Tool Result' },
+    system: { bg: 'rgba(156,163,175,0.06)', border: '#9ca3af', label: 'System' },
+  };
+  const c = colors[role] || colors.system;
+  const ts = msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+
+  const div = document.createElement('div');
+  div.className = 'chat-msg';
+  div.style.cssText = `margin-bottom:8px;padding:10px 14px;border-radius:8px;background:${c.bg};border-left:3px solid ${c.border};`;
+
+  // Header
+  const header = document.createElement('div');
+  header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;';
+  header.innerHTML = `<span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;color:var(--fg-muted);">${c.label}</span>${ts ? `<span style="font-size:10px;color:var(--fg-subtle);">${ts}</span>` : ''}`;
+  div.appendChild(header);
+
+  // Content
+  let content = msg.content || '';
+  content = content.replace(/Resume this session with:.*$/gm, '');
+  content = content.replace(/^Session:\s*\d+.*$/gm, '');
+  content = content.replace(/^Duration:.*$/gm, '');
+  content = content.replace(/^-{10,}$/gm, '');
+  content = content.trim();
+
+  const contentDiv = document.createElement('div');
+  contentDiv.style.cssText = 'font-size:13px;line-height:1.7;color:var(--fg);white-space:pre-wrap;word-break:break-word;';
+
+  // Tool call handling
+  if (role === 'tool' || role === 'tool_result') {
+    try {
+      const parsed = typeof content === 'string' && content.startsWith('{') ? JSON.parse(content) : null;
+      if (parsed?.function?.name) {
+        const details = document.createElement('details');
+        details.style.cssText = 'margin-top:4px;';
+        const summary = document.createElement('summary');
+        summary.style.cssText = 'cursor:pointer;font-size:12px;font-weight:600;color:var(--amber);';
+        summary.textContent = `🔧 ${parsed.function.name}`;
+        details.appendChild(summary);
+        const pre = document.createElement('pre');
+        pre.style.cssText = 'background:var(--bg-panel);padding:8px;border-radius:4px;font-size:11px;overflow-x:auto;max-height:300px;margin-top:6px;';
+        pre.textContent = JSON.stringify(parsed, null, 2);
+        details.appendChild(pre);
+        contentDiv.appendChild(details);
+      } else {
+        contentDiv.innerHTML = renderChatContent(content.substring(0, 3000));
+      }
+    } catch {
+      contentDiv.innerHTML = renderChatContent(content.substring(0, 3000));
+    }
+  } else {
+    contentDiv.innerHTML = renderChatContent(content.substring(0, 5000));
+  }
+
+  div.appendChild(contentDiv);
+  return div;
+}
+
+function newChatSession() {
   state._currentChatSession = 0;
-  const chatHeader = document.getElementById('chat-header');
-  if (chatHeader) chatHeader.querySelector('.chat-title').textContent = 'New Chat';
-  const stats = document.getElementById('chat-status-session');
-  if (stats) stats.textContent = '—';
-  const messages = document.getElementById('chat-messages');
-  if (messages) messages.innerHTML = '<div style="text-align:center;color:var(--fg-subtle);padding:60px 20px;"><div style="font-size:24px;margin-bottom:12px;">💬</div><div style="font-size:14px;margin-bottom:4px;">New conversation</div><div style="font-size:12px;">Type a message to start</div></div>';
+  document.getElementById('chat-title').textContent = 'New Chat';
+  document.getElementById('chat-subtitle').textContent = '';
+  document.getElementById('chat-status-session').textContent = '—';
+  document.getElementById('chat-status-tokens').textContent = '';
+  document.getElementById('chat-messages').innerHTML = `
+    <div style="text-align:center;color:var(--fg-subtle);padding:80px 20px;">
+      <div style="font-size:32px;margin-bottom:16px;">💬</div>
+      <div style="font-size:16px;margin-bottom:8px;color:var(--fg);">New conversation</div>
+      <div style="font-size:13px;">Type a message to start</div>
+    </div>
+  `;
+  document.querySelectorAll('.chat-session-item').forEach(el => el.classList.remove('active'));
 }
 
 async function renameChatSession(sessionId = 0) {
-  const titleEl = document.getElementById('chat-title');
-  const sessionIdNum = sessionId || parseInt(prompt('Enter session ID to rename:'));
-  if (isNaN(sessionIdNum)) return;
-  const t = await showModal({ title: 'Rename Session', message: 'Enter a new title for this session.', inputs: [{ placeholder: 'New title' }], buttons: [{ text: 'Cancel', value: false }, { text: 'Rename', value: true, primary: true }] });
+  const sid = sessionId || state._currentChatSession;
+  if (!sid) return showToast('No session selected', 'info');
+  const t = await showModal({ title: 'Rename Session', message: 'Enter a new title.', inputs: [{ placeholder: 'New title' }], buttons: [{ text: 'Cancel', value: false }, { text: 'Rename', value: true, primary: true }] });
   if (!t?.action || !t.inputs?.[0]) return;
   const n = t.inputs[0].trim();
   if (!n) return;
   try {
     const profile = document.getElementById('chat-profile')?.value || 'default';
-    const r = await fetch(`/api/sessions/${encodeURIComponent(sessionIdNum)}/rename`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': state.csrfToken || '' }, body: JSON.stringify({ title: n, profile }) });
-    if (r.ok) { showToast(`Session renamed`, 'success'); await loadChatSidebar(); if (sessionIdNum === 0) titleEl.textContent = n; } else showToast(`Rename failed`, 'error');
-  } catch (e) { showToast(`Rename failed: ${e.message}`, 'error'); }
+    const r = await fetch(`/api/sessions/${encodeURIComponent(sid)}/rename`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': state.csrfToken || '' }, body: JSON.stringify({ title: n, profile }), credentials: 'include' });
+    if (r.ok) { showToast('Session renamed', 'success'); document.getElementById('chat-title').textContent = n; refreshChatSidebar(); } else showToast('Rename failed', 'error');
+  } catch (e) { showToast('Rename failed: ' + e.message, 'error'); }
 }
 
 async function deleteChatSession(sessionId = 0) {
+  const sid = sessionId || state._currentChatSession;
+  if (!sid) return showToast('No session selected', 'info');
   if (!(await showModal({ title: 'Delete Session', message: 'Delete this session? This cannot be undone.', buttons: [{ text: 'Cancel', value: false }, { text: 'Delete', value: true, primary: true }] })?.action)) return;
   try {
     const profile = document.getElementById('chat-profile')?.value || 'default';
-    const r = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE', headers: { 'X-CSRF-Token': state.csrfToken || '', 'Content-Type': 'application/json' }, credentials: 'include' });
-    if (r.ok) { showToast(`Session deleted`, 'success'); await loadChatSidebar(); if (sessionId === 0) { const messages = document.getElementById('chat-messages'); if (messages) messages.innerHTML = '<div style="text-align:center;color:var(--fg-subtle);padding:60px 20px;"><div style="font-size:24px;margin-bottom:12px;">💬</div><div style="font-size:14px;margin-bottom:4px;">New conversation</div><div style="font-size:12px;">Type a message to start</div></div>'; } } else showToast(`Delete failed`, 'error');
-  } catch (e) { showToast(`Delete failed: ${e.message}`, 'error'); }
+    const r = await fetch(`/api/sessions/${encodeURIComponent(sid)}?profile=${encodeURIComponent(profile)}`, { method: 'DELETE', headers: { 'X-CSRF-Token': state.csrfToken || '' }, credentials: 'include' });
+    if (r.ok) { showToast('Session deleted', 'success'); newChatSession(); refreshChatSidebar(); } else showToast('Delete failed', 'error');
+  } catch (e) { showToast('Delete failed: ' + e.message, 'error'); }
 }
 
 async function sendChatMessage() {
