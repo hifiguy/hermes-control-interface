@@ -368,28 +368,28 @@ async function renameChatSession(sessionId = 0) {
   const titleEl = document.getElementById('chat-title');
   const sessionIdNum = sessionId || parseInt(prompt('Enter session ID to rename:'));
   if (isNaN(sessionIdNum)) return;
-  const t = await vd({ title: 'Rename Session', message: 'Enter a new title for this session.', inputs: [{ placeholder: 'New title' }], buttons: [{ text: 'Cancel', value: false }, { text: 'Rename', value: true, primary: true }] });
+  const t = await showModal({ title: 'Rename Session', message: 'Enter a new title for this session.', inputs: [{ placeholder: 'New title' }], buttons: [{ text: 'Cancel', value: false }, { text: 'Rename', value: true, primary: true }] });
   if (!t?.action || !t.inputs?.[0]) return;
   const n = t.inputs[0].trim();
   if (!n) return;
   try {
     const profile = document.getElementById('chat-profile')?.value || 'default';
-    const r = await fetch(`/api/sessions/${encodeURIComponent(sessionIdNum)}/rename`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': Y.csrfToken || '' }, body: JSON.stringify({ title: n, profile }) });
-    if (r.ok) { $(`Session renamed`, 'success'); await loadChatSidebar(); if (sessionIdNum === 0) titleEl.textContent = n; } else $(`Rename failed`, 'error');
-  } catch (e) { $(`Rename failed: ${e.message}`, 'error'); }
+    const r = await fetch(`/api/sessions/${encodeURIComponent(sessionIdNum)}/rename`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': state.csrfToken || '' }, body: JSON.stringify({ title: n, profile }) });
+    if (r.ok) { showToast(`Session renamed`, 'success'); await loadChatSidebar(); if (sessionIdNum === 0) titleEl.textContent = n; } else showToast(`Rename failed`, 'error');
+  } catch (e) { showToast(`Rename failed: ${e.message}`, 'error'); }
 }
 
 async function deleteChatSession(sessionId = 0) {
-  if (!(await vd({ title: 'Delete Session', message: 'Delete this session? This cannot be undone.', buttons: [{ text: 'Cancel', value: false }, { text: 'Delete', value: true, primary: true }] })?.action)) return;
+  if (!(await showModal({ title: 'Delete Session', message: 'Delete this session? This cannot be undone.', buttons: [{ text: 'Cancel', value: false }, { text: 'Delete', value: true, primary: true }] })?.action)) return;
   try {
     const profile = document.getElementById('chat-profile')?.value || 'default';
-    const r = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE', headers: { 'X-CSRF-Token': Y.csrfToken || '', 'Content-Type': 'application/json' }, credentials: 'include' });
-    if (r.ok) { $(`Session deleted`, 'success'); await loadChatSidebar(); if (sessionId === 0) { const messages = document.getElementById('chat-messages'); if (messages) messages.innerHTML = '<div style="text-align:center;color:var(--fg-subtle);padding:60px 20px;"><div style="font-size:24px;margin-bottom:12px;">💬</div><div style="font-size:14px;margin-bottom:4px;">New conversation</div><div style="font-size:12px;">Type a message to start</div></div>'; } } else $(`Delete failed`, 'error');
-  } catch (e) { $(`Delete failed: ${e.message}`, 'error'); }
+    const r = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE', headers: { 'X-CSRF-Token': state.csrfToken || '', 'Content-Type': 'application/json' }, credentials: 'include' });
+    if (r.ok) { showToast(`Session deleted`, 'success'); await loadChatSidebar(); if (sessionId === 0) { const messages = document.getElementById('chat-messages'); if (messages) messages.innerHTML = '<div style="text-align:center;color:var(--fg-subtle);padding:60px 20px;"><div style="font-size:24px;margin-bottom:12px;">💬</div><div style="font-size:14px;margin-bottom:4px;">New conversation</div><div style="font-size:12px;">Type a message to start</div></div>'; } } else showToast(`Delete failed`, 'error');
+  } catch (e) { showToast(`Delete failed: ${e.message}`, 'error'); }
 }
 
 async function sendChatMessage() {
-  if (Y._chatLock) return;
+  if (state._chatLock) return;
   const input = document.getElementById('chat-input');
   const text = input?.value?.trim();
   if (!text) return;
@@ -397,7 +397,7 @@ async function sendChatMessage() {
   const model = document.getElementById('chat-model')?.value || '';
   input.value = '';
   input.style.height = 'auto';
-  Y._chatLock = true;
+  state._chatLock = true;
   const btn = document.getElementById('chat-send-btn');
   if (btn) { btn.disabled = true; btn.textContent = '...'; }
   const messagesDiv = document.getElementById('chat-messages');
@@ -416,7 +416,7 @@ async function sendChatMessage() {
   let startTime = Date.now();
   try {
     const body = JSON.stringify({ message: text, profile, sessionId: 0, model });
-    const response = await fetch('/api/chat/send', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': Y.csrfToken || '' }, credentials: 'include', body });
+    const response = await fetch('/api/chat/send', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': state.csrfToken || '' }, credentials: 'include', body });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -451,7 +451,7 @@ async function sendChatMessage() {
   } catch (e) {
     if (contentDiv) contentDiv.innerHTML = Z(fullContent) + '<div style="color:var(--red);margin-top:8px;">Error: ' + Z(e.message) + '</div>';
   } finally {
-    Y._chatLock = false;
+    state._chatLock = false;
     if (btn) { btn.disabled = false; btn.textContent = 'Send'; }
   }
 }
@@ -3403,16 +3403,16 @@ async function refreshLogs() {
 }
 
 function toggleLogsAutoRefresh() {
-  if (Y._logsInterval) { clearInterval(Y._logsInterval); Y._logsInterval = null; document.getElementById("logs-auto-btn").textContent = "◯ auto"; document.getElementById("logs-auto-btn").classList.remove("active"); return; }
-  Y._logsInterval = setInterval(refreshLogs, 5000);
+  if (state._logsInterval) { clearInterval(state._logsInterval); state._logsInterval = null; document.getElementById("logs-auto-btn").textContent = "◯ auto"; document.getElementById("logs-auto-btn").classList.remove("active"); return; }
+  state._logsInterval = setInterval(refreshLogs, 5000);
   const btn = document.getElementById("logs-auto-btn");
   if (btn) { btn.textContent = "● auto"; btn.classList.add("active"); }
   refreshLogs();
 }
 
 function debounceLogsSearch() {
-  clearTimeout(Y._logsDebounce);
-  Y._logsDebounce = setTimeout(refreshLogs, 400);
+  clearTimeout(state._logsDebounce);
+  state._logsDebounce = setTimeout(refreshLogs, 400);
 }
 
 
@@ -3448,14 +3448,14 @@ window.hasPerm = hasPerm;
 function dismissNotif(el, id) {
   if (el) el.style.opacity = "0.4";
   if (id) {
-    const idx = Y.notifications.findIndex(n => n.id === id);
-    if (idx >= 0) { Y.notifications[idx].dismissed = true; md(); }
+    const idx = state.notifications.findIndex(n => n.id === id);
+    if (idx >= 0) { state.notifications[idx].dismissed = true; md(); }
   }
 }
 
 function loadMoreNotifs() {
-  if (Y._notifExtra) Y._notifExtra += 10;
-  else Y._notifExtra = 10;
+  if (state._notifExtra) state._notifExtra += 10;
+  else state._notifExtra = 10;
   md();
 }
 
