@@ -729,7 +729,8 @@ async function hcirestart() {
     const res = await api('/api/hci-restart', { method: 'POST', headers: { 'X-CSRF-Token': csrfToken } });
     if (res.ok) {
       showToast('HCI restarting...', 'success');
-      setTimeout(() => location.reload(), 3000);
+      // Wait 5s for server to come back up before reload (avoids 502)
+      setTimeout(() => location.reload(), 5000);
     } else {
       showToast(res.error || 'Restart failed', 'error');
     }
@@ -4369,13 +4370,13 @@ function renderConfigCategory(catKey) {
     // Edit button at TOP (not bottom)
     const editBtn = `
       <div style="margin-bottom:12px;">
-        <button class="btn btn-primary" onclick="window._enableEditLocal('${catKey}')">✏️ Edit ${categories.find(c => c.key === catKey)?.label || catKey}</button>
+        <button class="btn btn-primary" onclick="window._enableEditLocal('${catKey}')">✏️ Edit ${state._config?.categories?.find(c => c.key === catKey)?.label || catKey}</button>
       </div>
     `;
     contentEl.innerHTML = `
       <div class="card">
         ${editBtn}
-        <div class="card-title">${categories.find(c => c.key === catKey)?.label || catKey}</div>
+        <div class="card-title">${state._config?.categories?.find(c => c.key === catKey)?.label || catKey}</div>
         ${rows}
       </div>
     `;
