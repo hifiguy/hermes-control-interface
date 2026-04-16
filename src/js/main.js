@@ -1759,7 +1759,7 @@ async function loadAgentConfig(container, name) {
       </div>
     `;
 
-    function renderCategory(catKey) {
+    function renderConfigCategory(catKey) {
       const contentEl = document.getElementById('config-content');
       if (!contentEl) return;
       const isEditMode = contentEl.dataset.editMode === 'true';
@@ -2064,7 +2064,7 @@ async function loadCronJobs(profile) {
       var act = j.status === 'active'
         ? '<button class="btn btn-ghost btn-sm" onclick="cronAction(\''+profile+'\',\''+j.id+'\',\'pause\')" title="Pause">\u23F8</button> <button class="btn btn-ghost btn-sm" onclick="cronAction(\''+profile+'\',\''+j.id+'\',\'run\')" title="Run">\u25B6</button>'
         : '<button class="btn btn-ghost btn-sm" onclick="cronAction(\''+profile+'\',\''+j.id+'\',\'resume\')" title="Resume">\u23F5</button>';
-      return '<tr><td>'+(j.name||j.id)+'</td><td><code style="font-size:11px;">'+j.schedule+'</code></td><td><span class="badge '+sc+'">'+j.status+'</span></td><td style="font-size:11px;color:var(--fg-muted);">'+nr+'</td><td style="display:flex;gap:4px;">'+act+'<button class="btn btn-ghost btn-sm btn-danger" onclick="cronRemove(\''+profile+'\',\''+j.id+'\',\''+(j.name||j.id).replace(/'/g, "\\'")+'\')" title="Remove">\u00D7</button></td></tr>';
+      return '<tr><td>'+(j.name||j.id)+'</td><td><code style="font-size:11px;">'+j.schedule+'</code></td><td><span class="badge '+sc+'">'+j.status+'</span></td><td style="font-size:11px;color:var(--fg-muted);">'+nr+'</td><td style="display:flex;gap:4px;">'+act+'<button class="btn btn-ghost btn-sm" onclick="showEditCronModal(\''+profile+'\',\''+j.id+'\')" title="Edit">\u270F</button><button class="btn btn-ghost btn-sm btn-danger" onclick="cronRemove(\''+profile+'\',\''+j.id+'\',\''+(j.name||j.id).replace(/'/g, "\\'")+'\')" title="Remove">\u00D7</button></td></tr>';
     }).join('') + '</tbody></table>';
   } catch (e) { el.innerHTML = '<div class="error-msg">'+e.message+'</div>'; }
 }
@@ -2120,6 +2120,57 @@ function showCreateCronModal(profile) {
       else { showToast(res.error || 'Create failed', 'error'); }
     } catch (err) { showToast('Create failed: ' + err.message, 'error'); }
   });
+}
+
+function showEditCronModal(profile, jobId) {
+  // Fetch current job data
+  api('/api/hermes-cron/' + encodeURIComponent(profile)).then(function(res) {
+    if (!res.ok || !res.jobs) { showToast('Could not load job data', 'error'); return; }
+    const job = res.jobs.find(function(j) { return j.id === jobId; });
+    if (!job) { showToast('Job not found', 'error'); return; }
+
+    var overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.style.display = 'flex';
+    overlay.innerHTML = '<div class="modal-card" style="width:500px;max-width:90vw;"><div class="modal-title">Edit Cron Job</div><form id="cron-edit-form"><div style="margin-bottom:12px;"><label style="font-size:11px;color:var(--fg-muted);display:block;margin-bottom:4px;">Name</label><input type="text" id="cron-edit-name" value="'+escapeHtml(job.name || '')+'" placeholder="e.g. Daily health check" style="width:100%;padding:8px 12px;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius);color:var(--fg);font-family:var(--font);font-size:12px;" /></div><div style="margin-bottom:12px;"><label style="font-size:11px;color:var(--fg-muted);display:block;margin-bottom:4px;">Schedule</label><div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px;"><button type="button" class="btn btn-ghost btn-sm cron-edit-preset" data-val="5m">5m</button><button type="button" class="btn btn-ghost btn-sm cron-edit-preset" data-val="15m">15m</button><button type="button" class="btn btn-ghost btn-sm cron-edit-preset" data-val="30m">30m</button><button type="button" class="btn btn-ghost btn-sm cron-edit-preset" data-val="1h">1h</button><button type="button" class="btn btn-ghost btn-sm cron-edit-preset" data-val="6h">6h</button><button type="button" class="btn btn-ghost btn-sm cron-edit-preset" data-val="12h">12h</button><button type="button" class="btn btn-ghost btn-sm cron-edit-preset" data-val="daily">daily</button></div><input type="text" id="cron-edit-schedule" value="'+escapeHtml(job.schedule || '')+'" placeholder="e.g. every 30m or 0 9 * * *" style="width:100%;padding:8px 12px;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius);color:var(--fg);font-family:var(--font);font-size:12px;" required /></div><div style="margin-bottom:12px;"><label style="font-size:11px;color:var(--fg-muted);display:block;margin-bottom:4px;">Prompt (task instruction)</label><textarea id="cron-edit-prompt" rows="3" placeholder="Check system health and report" style="width:100%;resize:vertical;font-family:var(--font);font-size:12px;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius);color:var(--fg);padding:8px;">'+escapeHtml(job.prompt || '')+'</textarea></div><div style="display:flex;gap:8px;margin-bottom:12px;"><div style="flex:1;"><label style="font-size:11px;color:var(--fg-muted);display:block;margin-bottom:4px;">Deliver</label><select id="cron-edit-deliver" class="log-level-select" style="width:100%;"><option value="origin">origin</option><option value="local">local</option><option value="telegram">telegram</option><option value="discord">discord</option><option value="slack">slack</option><option value="whatsapp">whatsapp</option><option value="signal">signal</option><option value="matrix">matrix</option><option value="mattermost">mattermost</option><option value="email">email</option><option value="sms">sms</option><option value="homeassistant">homeassistant</option><option value="dingtalk">dingtalk</option><option value="feishu">feishu</option><option value="wecom">wecom</option><option value="weixin">weixin</option><option value="bluebubbles">bluebubbles</option></select></div><div style="flex:1;"><label style="font-size:11px;color:var(--fg-muted);display:block;margin-bottom:4px;">Repeat</label><select id="cron-edit-repeat" class="log-level-select" style="width:100%;"><option value="">forever</option><option value="1">once</option><option value="5">5 times</option><option value="10">10 times</option><option value="50">50 times</option></select></div></div><div class="modal-actions"><button type="button" class="btn btn-ghost" id="cron-edit-cancel">Cancel</button><button type="submit" class="btn btn-primary">Save Changes</button></div></form></div>';
+    document.body.appendChild(overlay);
+
+    // Set deliver/repeat selects to current values
+    var deliver = job.deliver || 'origin';
+    var repeat = job.repeat !== undefined ? String(job.repeat) : '';
+    var delSel = overlay.querySelector('#cron-edit-deliver');
+    if (delSel) delSel.value = Array.from(delSel.options).some(function(o) { return o.value === deliver; }) ? deliver : 'origin';
+    var repSel = overlay.querySelector('#cron-edit-repeat');
+    if (repSel) repSel.value = Array.from(repSel.options).some(function(o) { return o.value === repeat; }) ? repeat : '';
+
+    overlay.querySelectorAll('.cron-edit-preset').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        document.getElementById('cron-edit-schedule').value = btn.dataset.val;
+        overlay.querySelectorAll('.cron-edit-preset').forEach(function(b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+      });
+    });
+    overlay.querySelector('#cron-edit-cancel').addEventListener('click', function() { overlay.remove(); });
+    overlay.addEventListener('click', function(e) { if (e.target === overlay) overlay.remove(); });
+    overlay.querySelector('#cron-edit-form').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      var schedule = document.getElementById('cron-edit-schedule').value.trim();
+      var prompt = document.getElementById('cron-edit-prompt').value.trim();
+      var name = document.getElementById('cron-edit-name').value.trim();
+      var deliverVal = document.getElementById('cron-edit-deliver').value;
+      var repeatVal = document.getElementById('cron-edit-repeat').value;
+      if (!schedule) { showToast('Schedule required', 'error'); return; }
+      try {
+        var res = await api('/api/hermes-cron/' + encodeURIComponent(profile) + '/' + jobId, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': state.csrfToken || '' },
+          body: JSON.stringify({ schedule: schedule, prompt: prompt, name: name, deliver: deliverVal, repeat: repeatVal || undefined }),
+        });
+        if (res.ok) { showToast('Cron job updated', 'success'); overlay.remove(); setTimeout(function() { loadCronJobs(profile); }, 500); }
+        else { showToast(res.error || 'Update failed', 'error'); }
+      } catch (err) { showToast('Update failed: ' + err.message, 'error'); }
+    });
+  }).catch(function(e) { showToast('Could not load job data: ' + e.message, 'error'); });
 }
 
 
@@ -2741,10 +2792,6 @@ async function loadMaintenance(container) {
         </div>
       </div>
       <div class="card">
-        <div class="card-title">Hermes Auth</div>
-        <div id="auth-list"><div class="loading">Loading auth...</div></div>
-      </div>
-      <div class="card">
         <div class="card-title">Audit Log</div>
         <div id="audit-log"><div class="loading">Loading audit...</div></div>
       </div>
@@ -2753,9 +2800,6 @@ async function loadMaintenance(container) {
 
   // Load users
   loadUsers();
-
-  // Load auth
-  loadAuth();
 
   // Load audit
   loadAudit();
@@ -3632,25 +3676,34 @@ async function customPrompt(message, defaultValue = '', title = 'Input') {
 // File Explorer
 // ============================================
 async function loadFileExplorer(container, dirPath = '') {
+  const isMobile = window.innerWidth <= 768;
+  const sidebarId = 'file-sidebar-overlay';
+  const backdropId = 'file-sidebar-backdrop';
+
   container.innerHTML = `
     <div class="page-header">
       <div>
         <div class="page-title">File Explorer</div>
         <div class="page-subtitle">.hermes directory browser</div>
       </div>
-      <div style="display:flex;gap:8px;">
+      <div style="display:flex;gap:8px;align-items:center;">
+        ${isMobile ? `<button class="btn btn-ghost" id="toggle-file-sidebar" onclick="toggleFileSidebar()">☰ Files</button>` : ''}
         <button class="btn btn-ghost" onclick="loadFileExplorer(document.querySelector('.page.active'), '')">⌂ Root</button>
         <button class="btn btn-ghost" onclick="loadFileExplorer(document.querySelector('.page.active'), '${dirPath}')">↻ Refresh</button>
       </div>
     </div>
     <div class="file-explorer-split">
-      <div class="file-tree-panel">
+      ${isMobile ? `<div id="${backdropId}" class="file-sidebar-backdrop" onclick="toggleFileSidebar()" style="display:none;"></div>` : ''}
+      <div class="file-tree-panel" id="${sidebarId}" style="${isMobile ? 'display:none;position:fixed;top:0;left:0;bottom:0;width:280px;z-index:300;margin:0;transform:translateX(-100%);transition:transform .25s ease;' : ''}">
         <div id="file-tree"><div class="loading">Loading...</div></div>
       </div>
       <div class="file-editor-panel" id="file-editor-panel" style="display:none;">
         <div class="file-editor-toolbar">
           <span id="file-editor-path" class="file-editor-path">Select a file</span>
-          <button class="btn btn-ghost btn-sm" id="file-save-btn" style="display:none;" onclick="saveCurrentFile()">Save</button>
+          <div style="display:flex;gap:4px;">
+            ${isMobile ? `<button class="btn btn-ghost btn-sm" onclick="toggleFileSidebar()" style="display:inline-flex;">☰</button>` : ''}
+            <button class="btn btn-ghost btn-sm" id="file-save-btn" style="display:none;" onclick="saveCurrentFile()">Save</button>
+          </div>
         </div>
         <textarea id="file-editor-text" class="file-editor-textarea" spellcheck="false" placeholder="Select a file from the tree"></textarea>
       </div>
@@ -3669,9 +3722,9 @@ async function loadFileExplorer(container, dirPath = '') {
       return;
     }
 
-    // Breadcrumb
+    // Breadcrumb — scrollable on mobile
     const parts = res.path ? res.path.split('/').filter(Boolean) : [];
-    let breadcrumb = `<div class="file-breadcrumb"><span class="file-link" onclick="loadFileExplorer(document.querySelector('.page.active'), '')">⌂ .hermes</span>`;
+    let breadcrumb = `<div class="file-breadcrumb" style="overflow-x:auto;white-space:nowrap;"><span class="file-link" onclick="loadFileExplorer(document.querySelector('.page.active'), '')">⌂ .hermes</span>`;
     let accum = '';
     for (const part of parts) {
       accum += '/' + part;
@@ -3682,15 +3735,15 @@ async function loadFileExplorer(container, dirPath = '') {
     // File list
     let itemsHtml = '';
     if (res.path) {
-      itemsHtml += `<div class="file-item file-dir" onclick="loadFileExplorer(document.querySelector('.page.active'), '${res.parent}')"><span>📁 ..</span></div>`;
+      itemsHtml += `<div class="file-item file-dir" style="min-height:44px;" onclick="loadFileExplorer(document.querySelector('.page.active'), '${res.parent}');${isMobile?'toggleFileSidebar();':''}"><span>📁 ..</span></div>`;
     }
     for (const item of res.items) {
       const icon = item.type === 'directory' ? '📁' : '📄';
       const size = item.type === 'file' ? ` <span class="file-meta">${formatFileSize(item.size)}</span>` : '';
       const action = item.type === 'directory'
-        ? `loadFileExplorer(document.querySelector('.page.active'), '${item.path}')`
-        : `openFileInEditor('${item.path}')`;
-      itemsHtml += `<div class="file-item ${item.type === 'directory' ? 'file-dir' : 'file-file'}" onclick="${action}"><span>${icon} ${item.name}</span>${size}</div>`;
+        ? `loadFileExplorer(document.querySelector('.page.active'), '${item.path}');${isMobile?'toggleFileSidebar();':''}`
+        : `openFileInEditor('${item.path}');${isMobile?'toggleFileSidebar();':''}`;
+      itemsHtml += `<div class="file-item ${item.type === 'directory' ? 'file-dir' : 'file-file'}" style="min-height:44px;" onclick="${action}"><span>${icon} ${item.name}</span>${size}</div>`;
     }
 
     treeEl.innerHTML = breadcrumb + (itemsHtml || '<div class="empty">Empty directory</div>');
@@ -3698,6 +3751,22 @@ async function loadFileExplorer(container, dirPath = '') {
     document.getElementById('file-tree').innerHTML = `<div class="error-msg">${e.message}</div>`;
   }
 }
+
+window.toggleFileSidebar = function() {
+  const sidebar = document.getElementById('file-sidebar-overlay');
+  const backdrop = document.getElementById('file-sidebar-backdrop');
+  if (!sidebar) return;
+  const isOpen = sidebar.style.display !== 'none' || sidebar.style.transform === '';
+  if (isOpen) {
+    sidebar.style.display = 'none';
+    sidebar.style.transform = 'translateX(-100%)';
+    if (backdrop) backdrop.style.display = 'none';
+  } else {
+    sidebar.style.display = 'flex';
+    sidebar.style.transform = 'translateX(0)';
+    if (backdrop) backdrop.style.display = 'block';
+  }
+};
 
 // Open file in the editor pane (split view)
 window.currentFilePath = null;
@@ -3856,33 +3925,43 @@ Object.assign(window, {
 
 // ============================================
 // Logs Functions
-// ============================================
+// Logs page with pagination
+const LOGS_PER_PAGE = 50;
+const LOGS_MAX_FETCH = 500;
+
 async function loadLogs(container) {
   container.innerHTML = `
     <div class="logs-toolbar">
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-        <select id="logs-profile" class="log-level-select" onchange="refreshLogs()" style="width:120px;">
+        <select id="logs-profile" class="log-level-select" onchange="changeLogsPage(1)" style="width:120px;">
           <option value="all">All Profiles</option>
         </select>
-        <select id="logs-source" class="log-level-select" onchange="refreshLogs()" style="width:120px;">
+        <select id="logs-source" class="log-level-select" onchange="changeLogsPage(1)" style="width:120px;">
           <option value="all">All Sources</option>
         </select>
-        <select id="logs-level" class="log-level-select" onchange="refreshLogs()" style="width:120px;">
+        <select id="logs-level" class="log-level-select" onchange="changeLogsPage(1)" style="width:120px;">
           <option value="">All Levels</option>
           <option value="error">Error</option>
           <option value="warn">Warning</option>
           <option value="debug">Debug</option>
+          <option value="info">Info</option>
         </select>
         <input id="logs-search" class="search-input" placeholder="Search logs…" oninput="debounceLogsSearch()" />
       </div>
       <div style="display:flex;gap:8px;align-items:center;">
         <button class="btn btn-ghost btn-sm" id="logs-auto-btn" onclick="toggleLogsAutoRefresh()">◯ auto</button>
-        <button class="btn btn-ghost btn-sm" onclick="refreshLogs()">⟳ Refresh</button>
-        <button class="btn btn-ghost btn-sm" onclick="loadMoreNotifs()" style="display:none;" id="logs-load-more">Load more</button>
+        <button class="btn btn-ghost btn-sm" onclick="changeLogsPage(1)">⟳ Refresh</button>
       </div>
     </div>
     <div id="logs-list"></div>
+    <div id="logs-pagination" style="display:none;align-items:center;justify-content:center;gap:8px;padding:12px 0;flex-wrap:wrap;"></div>
   `;
+
+  // Init state
+  state._logsData = [];
+  state._logsPage = 1;
+  state._logsTotal = 0;
+
   refreshLogs();
 }
 
@@ -3893,31 +3972,118 @@ async function refreshLogs() {
   const search = document.getElementById("logs-search")?.value || "";
   const container = document.getElementById("logs-list");
   if (!container) return;
+
   container.innerHTML = '<div class="loading">Loading logs</div>';
+
   try {
-    const o = new URLSearchParams({ profile, source, lines: "300" });
+    const o = new URLSearchParams({ profile, source, lines: String(LOGS_MAX_FETCH) });
     if (level) o.set("level", level);
     if (search) o.set("search", search);
-    const t0 = performance.now();
+
     const r = await api("/api/logs?" + o);
-    const t = Math.round(performance.now() - t0);
     if (r.ok && r.logs) {
-      if (r.logs.length === 0) { container.innerHTML = `<div class="empty">No log entries found</div>`; return; }
-      container.innerHTML = r.logs.map(e => {
-        const lvl = e.level === "error" ? "error-msg" : e.level === "warn" ? "warning" : e.level === "debug" ? "subtle" : "";
-        const time = e.timestamp ? e.timestamp.replace(/T/, " ").replace(/\.\d+Z?/, "") : "—";
-        const prof = `<span style="color:var(--accent);font-size:10px;">[${escapeHtml(e.profile || '')}]</span>`;
-        const src = `<span style="color:var(--fg-subtle);font-size:10px;">[${escapeHtml(e.source || '')}]</span>`;
-        return `<div style="padding:3px 0;border-bottom:1px solid var(--border);line-height:1.5;"><div style="font-size:11px;color:var(--fg-muted);">${time} ${prof} ${src}</div><div class="${lvl}" style="font-size:13px;">${escapeHtml(e.message || '')}</div></div>`;
-      }).join("");
-      const btn = document.getElementById("logs-load-more");
-      if (btn) btn.style.display = r.count && r.count >= 300 ? "block" : "none";
-    } else { container.innerHTML = `<div class="error-msg">Error loading logs</div>`; }
-  } catch (e) { container.innerHTML = `<div class="error-msg">${escapeHtml(e.message)}</div>`; }
+      state._logsData = r.logs;
+      state._logsTotal = r.logs.length;
+      state._logsPage = 1;
+      renderLogsPage(1);
+    } else {
+      container.innerHTML = `<div class="error-msg">Error loading logs</div>`;
+    }
+  } catch (e) {
+    container.innerHTML = `<div class="error-msg">${escapeHtml(e.message)}</div>`;
+  }
 }
 
+function renderLogsPage(page) {
+  const container = document.getElementById("logs-list");
+  const pager = document.getElementById("logs-pagination");
+  if (!container || !pager) return;
+
+  const perPage = LOGS_PER_PAGE;
+  const total = state._logsTotal;
+  const totalPages = Math.max(1, Math.ceil(total / perPage));
+  const pageNum = Math.min(Math.max(1, page), totalPages);
+  state._logsPage = pageNum;
+
+  const start = (pageNum - 1) * perPage;
+  const end = start + perPage;
+  const pageLogs = state._logsData.slice(start, end);
+
+  if (pageLogs.length === 0) {
+    container.innerHTML = `<div class="empty">No log entries found</div>`;
+    pager.style.display = 'none';
+    return;
+  }
+
+  // Render log cards
+  container.innerHTML = pageLogs.map(e => {
+    const lvl = e.level === "error" ? "error-msg" : e.level === "warn" ? "warning" : e.level === "debug" ? "subtle" : "";
+    const time = e.timestamp ? e.timestamp.replace(/T/, " ").replace(/\.\d+Z?/, "") : "—";
+    const lvlBadge = e.level
+      ? `<span class="badge ${e.level === 'error' ? 'error' : e.level === 'warn' ? 'warning' : 'inactive'}" style="font-size:9px;padding:1px 5px;">${e.level.toUpperCase()}</span>`
+      : '';
+    const profBadge = e.profile ? `<span class="badge inactive" style="font-size:9px;padding:1px 5px;color:var(--accent);">[${escapeHtml(e.profile)}]</span>` : '';
+    const srcBadge = e.source ? `<span class="badge inactive" style="font-size:9px;padding:1px 5px;">${escapeHtml(e.source)}</span>` : '';
+    const msg = escapeHtml(e.message || '');
+    const isLong = (e.message || '').length > 300;
+    const shortMsg = isLong ? msg.substring(0, 300) : msg;
+    const msgId = 'log-msg-' + Math.random().toString(36).slice(2);
+
+    return `
+      <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px;margin-bottom:8px;overflow:hidden;">
+        <div style="display:flex;align-items:center;gap:6px;padding:8px 12px 6px;flex-wrap:wrap;">
+          <span style="font-size:10px;color:var(--fg-muted);font-family:var(--font);">${time}</span>
+          ${profBadge}
+          ${srcBadge}
+          ${lvlBadge}
+          <span style="margin-left:auto;font-size:10px;color:var(--fg-subtle);">#${start + pageLogs.indexOf(e) + 1}</span>
+        </div>
+        <div style="padding:0 12px 10px;">
+          <div class="log-msg-text ${lvl}" style="font-size:13px;line-height:1.5;word-break:break-word;">${shortMsg}</div>
+          ${isLong ? `<button class="btn btn-link btn-sm" onclick="toggleLogExpand('${msgId}')" style="margin-top:4px;font-size:11px;color:var(--fg-muted);">▾ Show more</button><div id="${msgId}" style="display:none;" class="log-msg-text ${lvl}" style="font-size:13px;line-height:1.5;word-break:break-word;margin-top:6px;">${msg}</div>` : ''}
+        </div>
+      </div>`;
+  }).join('');
+
+  // Render pagination controls
+  const prevDisabled = pageNum <= 1 ? 'opacity:0.4;pointer-events:none;' : '';
+  const nextDisabled = pageNum >= totalPages ? 'opacity:0.4;pointer-events:none;' : '';
+  pager.style.display = 'flex';
+  pager.innerHTML = `
+    <button class="btn btn-ghost btn-sm" onclick="changeLogsPage(${pageNum - 1})" style="${prevDisabled}">← Prev</button>
+    <span style="font-size:11px;color:var(--fg-muted);padding:0 8px;">Page ${pageNum} of ${totalPages}</span>
+    <span style="font-size:11px;color:var(--fg-subtle);padding:0 4px;">(${total} entries)</span>
+    <button class="btn btn-ghost btn-sm" onclick="changeLogsPage(${pageNum + 1})" style="${nextDisabled}">Next →</button>
+    <div style="display:flex;gap:4px;margin-left:12px;">
+      ${Array.from({length: Math.min(5, totalPages)}, (_, i) => {
+        const p = i + 1;
+        const active = p === pageNum ? 'background:var(--accent-dim);border-color:var(--accent);' : '';
+        return `<button class="btn btn-ghost btn-sm" onclick="changeLogsPage(${p})" style="min-width:32px;${active}">${p}</button>`;
+      }).join('')}
+    </div>
+  `;
+}
+
+function changeLogsPage(page) {
+  renderLogsPage(page);
+}
+
+window.toggleLogExpand = function(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const isHidden = el.style.display === 'none';
+  el.style.display = isHidden ? 'block' : 'none';
+  el.previousElementSibling.textContent = isHidden ? '▴ Show less' : '▾ Show more';
+};
+
 function toggleLogsAutoRefresh() {
-  if (state._logsInterval) { clearInterval(state._logsInterval); state._logsInterval = null; document.getElementById("logs-auto-btn").textContent = "◯ auto"; document.getElementById("logs-auto-btn").classList.remove("active"); return; }
+  if (state._logsInterval) {
+    clearInterval(state._logsInterval);
+    state._logsInterval = null;
+    const btn = document.getElementById("logs-auto-btn");
+    if (btn) { btn.textContent = "◯ auto"; btn.classList.remove("active"); }
+    return;
+  }
   state._logsInterval = setInterval(refreshLogs, 5000);
   const btn = document.getElementById("logs-auto-btn");
   if (btn) { btn.textContent = "● auto"; btn.classList.add("active"); }

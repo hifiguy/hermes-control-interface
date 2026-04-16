@@ -245,6 +245,12 @@
 .file-item.file-dir span:first-child { color: var(--accent); }
 .file-meta { font-size: 10px; color: var(--fg-subtle); }
 .file-empty { padding: 20px; text-align: center; color: var(--fg-subtle); font-size: 12px; }
+.file-sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 299;
+}
 
 /* Themed select */
 .log-level-select {
@@ -1836,4 +1842,7 @@
   .chat-layout { flex-direction: column; height: auto; }
   .chat-sidebar { width: 100%; min-width: 0; max-height: 200px; border-right: 0; border-bottom: 1px solid var(--border); }
   .chat-main { min-height: 400px; }
+  .file-explorer-split { flex-direction: column; }
+  .file-editor-panel { min-height: 300px; }
+  .file-editor-textarea { font-size: 14px; }
 }

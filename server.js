@@ -92,8 +92,10 @@ function execHermes(args, timeout = 30000) {
       encoding: 'utf8',
       maxBuffer: 64 * 1024,
       timeout,
-    }, (err, stdout) => {
-      resolve(err ? '' : stdout);
+    }, (err, stdout, stderr) => {
+      // stderr often contains real error messages hermes doesn't write to stdout
+      const output = err ? (stdout + '\n' + stderr) : stdout;
+      resolve(output);
     });
   });
 }
@@ -2783,8 +2785,8 @@ app.post('/api/skills/install', requireRole('admin'), async (req, res) => {
   try {
     const { skill, profile } = req.body || {};
     if (!skill) return res.status(400).json({ ok: false, error: 'skill name required' });
-    const flag = profile ? `-p ${sanitizeProfileName(profile)}` : '';
-    const output = await execHermes([flag, 'skills', 'install', skill, '--yes'].filter(Boolean), 30000);
+    const profArg = profile ? ['-p', sanitizeProfileName(profile)] : [];
+    const output = await execHermes([...profArg, 'skills', 'install', skill, '--yes'], 30000);
     const success = !output.includes('error') && !output.includes('Error');
     res.json({ ok: success, output });
   } catch (e) {
@@ -2797,8 +2799,8 @@ app.post('/api/skills/uninstall', requireRole('admin'), async (req, res) => {
   try {
     const { skill, profile } = req.body || {};
     if (!skill) return res.status(400).json({ ok: false, error: 'skill name required' });
-    const flag = profile ? `-p ${sanitizeProfileName(profile)}` : '';
-    const output = await execHermes([flag, 'skills', 'uninstall', skill, '--yes'].filter(Boolean), 15000);
+    const profArg = profile ? ['-p', sanitizeProfileName(profile)] : [];
+    const output = await execHermes([...profArg, 'skills', 'uninstall', skill, '--yes'], 15000);
     res.json({ ok: true, output });
   } catch (e) {
     res.json({ ok: false, error: e.message });
@@ -3481,6 +3483,27 @@ app.post('/api/hermes-cron/:profile/:jobId/:action', requireCsrf, async (req, re
     if (!['pause', 'resume', 'run', 'remove'].includes(action)) return res.status(400).json({ ok: false, error: 'invalid action' });
     const output = await execHermes(['-p', profile, 'cron', action, jobId], 10000);
     addNotification('info', `Cron ${action}: ${jobId.slice(0, 8)}…`);
+    res.json({ ok: true, output });
+  } catch (e) {
+    res.json({ ok: false, error: e.message });
+  }
+});
+
+// Cron edit endpoint
+app.put('/api/hermes-cron/:profile/:jobId', requireCsrf, async (req, res) => {
+  try {
+    const profile = sanitizeProfileName(req.params.profile);
+    const jobId = req.params.jobId;
+    if (!profile) return res.status(400).json({ ok: false, error: 'invalid profile name' });
+    if (!/^[a-f0-9]+$/.test(jobId)) return res.status(400).json({ ok: false, error: 'invalid job id' });
+    const { schedule, prompt, name, deliver, repeat } = req.body || {};
+    const args = ['-p', profile, 'cron', 'edit', jobId];
+    if (schedule) args.push('--schedule', schedule);
+    if (prompt !== undefined) args.push('--prompt', prompt);
+    if (name !== undefined) args.push('--name', name);
+    if (deliver !== undefined) args.push('--deliver', deliver);
+    if (repeat !== undefined) args.push('--repeat', String(repeat));
+    const output = await execHermes(args, 10000);
     res.json({ ok: true, output });
   } catch (e) {
     res.json({ ok: false, error: e.message });
