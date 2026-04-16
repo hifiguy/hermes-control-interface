@@ -282,8 +282,8 @@ app.post('/api/chat/send', requireAuth, requirePerm('sessions.messages'), async 
   const escapedMsg = "'" + message.replace(/'/g, "'\\''") + "'";
   const profileFlag = prof !== 'default' ? `-p ${prof}` : '';
   const modelFlag = model ? `-m ${model}` : '';
-  // Resume existing session or continue latest
-  const resumeFlag = sessionId ? `--resume ${sessionId}` : '--continue';
+  // Resume existing session, or create new with empty --continue flag
+  const resumeFlag = sessionId ? `--resume ${sessionId}` : '--continue ""';
   const fullCmd = `hermes chat -Q -q ${escapedMsg} ${profileFlag} ${modelFlag} ${resumeFlag} 2>&1`;
 
   // SSE response
@@ -327,7 +327,8 @@ app.post('/api/chat/send', requireAuth, requirePerm('sessions.messages'), async 
     proc.on('close', () => {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       // Extract real hermes session ID from output
-      const sidMatch = fullResponse.match(/Session:\s+([0-9]{8}_[0-9]{6}_[a-f0-9]+)/i);
+      const sidMatch = fullResponse.match(/session_id:\s*([0-9]{8}_[0-9]{6}_[a-f0-9]+)/i)
+                   || fullResponse.match(/Session:\s+([0-9]{8}_[0-9]{6}_[a-f0-9]+)/i);
       const newSessionId = sidMatch ? sidMatch[1] : sessionId || '';
       res.write(`data: ${JSON.stringify({ type: 'done', sessionId: newSessionId, elapsed: parseFloat(elapsed) })}\n\n`);
       res.end();
@@ -1614,8 +1615,16 @@ app.get('/api/notifications', requireAuth, (req, res) => {
   res.json({ ok: true, notifications: notifs });
 });
 
+// Support both /api/notifications/:id/dismiss (URL param) and /api/notifications/dismiss (body id)
 app.post('/api/notifications/:id/dismiss', requireAuth, (req, res) => {
-  dismissNotification(req.params.id);
+  const id = req.params.id || req.body?.id;
+  if (id) dismissNotification(id);
+  res.json({ ok: true });
+});
+
+app.post('/api/notifications/dismiss', requireAuth, (req, res) => {
+  const id = req.body?.id;
+  if (id) dismissNotification(id);
   res.json({ ok: true });
 });
 

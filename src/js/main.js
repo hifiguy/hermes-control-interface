@@ -246,39 +246,48 @@ async function loadChat(container) {
   container.innerHTML = `
     <style>
       .chat-layout { display: flex; height: calc(100vh - 56px - 48px); margin: -24px; }
-      .chat-sidebar { width: 280px; min-width: 280px; background: var(--bg-panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; transition: transform 0.3s ease, width 0.3s ease, min-width 0.3s ease, padding 0.3s ease; overflow: hidden; }
+      .chat-sidebar { width: 280px; min-width: 280px; background: var(--bg-panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; transition: transform 0.3s ease, width 0.3s ease, min-width 0.3s ease, padding 0.3s ease; overflow: hidden; flex-shrink: 0; }
       .chat-sidebar.collapsed { transform: translateX(-100%); width: 0; min-width: 0; padding: 0; border: none; }
       .chat-sidebar-header { padding: 12px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
       .chat-sidebar-list { flex: 1; overflow-y: auto; padding: 8px; }
       .chat-session-item { padding: 8px 10px; border-radius: var(--radius); cursor: pointer; font-size: 12px; color: var(--fg-muted); transition: background var(--transition); margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .chat-session-item:hover { background: var(--bg-panel-hover); color: var(--fg); }
       .chat-session-item.active { background: var(--bg-panel); border: 1px solid var(--border); color: var(--fg); }
-      .chat-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-      .chat-header { padding: 10px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; background: var(--bg-base); }
-      .chat-messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
-      .chat-status-bar { font-size: 10px; color: var(--fg-subtle); display: flex; gap: 12px; padding: 4px 16px; border-bottom: 1px solid var(--border); background: var(--bg-inset); }
-      .chat-input-area { padding: 12px 16px; border-top: 1px solid var(--border); display: flex; gap: 8px; align-items: flex-end; background: var(--bg-base); }
+      .chat-main { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+      .chat-header { padding: 10px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; background: var(--bg-base); flex-shrink: 0; }
+      .chat-messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+      .chat-status-bar { font-size: 10px; color: var(--fg-subtle); display: flex; gap: 12px; padding: 4px 16px; border-bottom: 1px solid var(--border); background: var(--bg-inset); flex-shrink: 0; }
+      .chat-input-area { padding: 12px 16px; border-top: 1px solid var(--border); display: flex; gap: 8px; align-items: flex-end; background: var(--bg-base); flex-shrink: 0; }
       #chat-input { flex: 1; resize: none; max-height: 120px; padding: 10px 14px; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius); color: var(--fg); font-family: var(--font); font-size: 13px; outline: none; }
       #chat-input:focus { border-color: var(--fg); }
       .chat-sidebar-backdrop { display: none; position: fixed; inset: 56px 0 0 0; background: rgba(0,0,0,0.5); z-index: 99; }
       .chat-sidebar-toggle { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; background: transparent; border: 1px solid var(--border); border-radius: var(--radius); color: var(--fg); cursor: pointer; z-index: 101; }
       .chat-sidebar-toggle:hover { background: var(--bg-input); }
       .icon-btn { padding: 0; background: transparent; border: none; color: var(--fg); cursor: pointer; border-radius: var(--radius); }
+      #chat-profile { width:100%;margin:0;padding:8px;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius);color:var(--fg);font-family:var(--font);font-size:13px;outline:none;cursor:pointer; }
+      #chat-profile:focus { border-color: var(--gold, #ffac02); }
+      #chat-session-search { width:100%;margin:6px 0 0 0;padding:6px 8px;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius);color:var(--fg);font-family:var(--font);font-size:12px;outline:none; }
+      #chat-session-search::placeholder { color: var(--fg-muted); }
       @media (max-width: 768px) {
-        .chat-sidebar { position: fixed; left: 0; top: 56px; height: calc(100vh - 56px); z-index: 100; }
+        .chat-sidebar { position: fixed; left: 0; top: 56px; height: calc(100vh - 56px); z-index: 100; box-shadow: 2px 0 8px rgba(0,0,0,0.3); }
         .chat-sidebar.collapsed { transform: translateX(-100%); }
         .chat-sidebar-backdrop.active { display: block; }
-        .chat-layout { margin: -16px; }
+        .chat-layout { margin: -12px; height: calc(100vh - 56px - 48px); }
         .chat-header { position: relative; z-index: 102; }
+        .chat-main { min-width: 0; }
+      }
+      @media (max-width: 480px) {
+        .chat-sidebar { width: 100%; min-width: 100%; }
+        .chat-layout { margin: -8px; }
       }
     </style>
     <div class="chat-layout">
       <div id="chat-sidebar" class="chat-sidebar${sidebarCollapsed}">
         <div class="chat-sidebar-header">
-          <select id="chat-profile" style="width:100%;margin:0;padding:8px;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius);color:var(--fg);font-family:var(--font);font-size:13px;outline:none;">
+          <select id="chat-profile">
             ${profileOptions || '<option value="default">default</option>'}
           </select>
-          <input type="text" id="chat-session-search" class="search-input" placeholder="Search sessions..." style="margin-top:6px;" />
+          <input type="text" id="chat-session-search" class="search-input" placeholder="Search sessions..." />
           <button class="btn btn-primary btn-sm" style="width:100%;margin-top:6px;" onclick="newChatSession()">+ New Chat</button>
         </div>
         <div class="chat-sidebar-list" id="chat-sidebar-list">
