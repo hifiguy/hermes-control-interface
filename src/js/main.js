@@ -12,6 +12,8 @@ const state = {
   notifications: [],
   notifInterval: null,
   notifFailCount: 0,
+  _currentChatSession: null,
+  chatSidebarOpen: localStorage.getItem('hci-chat-sidebar') !== 'false',
 };
 
 // ============================================
@@ -238,9 +240,39 @@ async function loadChat(container) {
   const profileOptions = profiles.map(p => `<option value="${p.name}">${p.name}${p.active ? ' ★' : ''}</option>`).join('');
   const defaultProfile = profiles.find(p => p.active)?.name || 'default';
 
+  // Sidebar state
+  const sidebarCollapsed = state.chatSidebarOpen ? '' : ' collapsed';
+
   container.innerHTML = `
+    <style>
+      .chat-layout { display: flex; height: calc(100vh - 56px - 48px); margin: -24px; }
+      .chat-sidebar { width: 280px; min-width: 280px; background: var(--bg-panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; transition: transform 0.3s ease, width 0.3s ease, min-width 0.3s ease, padding 0.3s ease; overflow: hidden; }
+      .chat-sidebar.collapsed { transform: translateX(-100%); width: 0; min-width: 0; padding: 0; border: none; }
+      .chat-sidebar-header { padding: 12px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
+      .chat-sidebar-list { flex: 1; overflow-y: auto; padding: 8px; }
+      .chat-session-item { padding: 8px 10px; border-radius: var(--radius); cursor: pointer; font-size: 12px; color: var(--fg-muted); transition: background var(--transition); margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .chat-session-item:hover { background: var(--bg-panel-hover); color: var(--fg); }
+      .chat-session-item.active { background: var(--bg-panel); border: 1px solid var(--border); color: var(--fg); }
+      .chat-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+      .chat-header { padding: 10px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; background: var(--bg-base); }
+      .chat-messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+      .chat-status-bar { font-size: 10px; color: var(--fg-subtle); display: flex; gap: 12px; padding: 4px 16px; border-bottom: 1px solid var(--border); background: var(--bg-inset); }
+      .chat-input-area { padding: 12px 16px; border-top: 1px solid var(--border); display: flex; gap: 8px; align-items: flex-end; background: var(--bg-base); }
+      #chat-input { flex: 1; resize: none; max-height: 120px; padding: 10px 14px; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius); color: var(--fg); font-family: var(--font); font-size: 13px; outline: none; }
+      #chat-input:focus { border-color: var(--fg); }
+      #chat-model { padding: 8px; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius); color: var(--fg); font-family: var(--font); font-size: 11px; }
+      .chat-sidebar-backdrop { display: none; position: fixed; inset: 56px 0 0 0; background: rgba(0,0,0,0.5); z-index: 99; }
+      .chat-sidebar-toggle { display: none; }
+      @media (max-width: 768px) {
+        .chat-sidebar { position: fixed; left: 0; top: 56px; height: calc(100vh - 56px); z-index: 100; }
+        .chat-sidebar.collapsed { transform: translateX(-100%); }
+        .chat-sidebar-backdrop.active { display: block; }
+        .chat-sidebar-toggle { display: inline-flex !important; }
+        .chat-layout { margin: -16px; }
+      }
+    </style>
     <div class="chat-layout">
-      <div class="chat-sidebar" id="chat-sidebar">
+      <div id="chat-sidebar" class="chat-sidebar${sidebarCollapsed}">
         <div class="chat-sidebar-header">
           <select id="chat-profile" class="modal-input" style="width:100%;margin:0;padding:8px;">
             ${profileOptions || '<option value="default">default</option>'}
@@ -252,11 +284,17 @@ async function loadChat(container) {
           <div class="loading">Loading sessions...</div>
         </div>
       </div>
+      <div class="chat-sidebar-backdrop" id="chat-sidebar-backdrop" onclick="toggleChatSidebar()"></div>
       <div class="chat-main">
         <div class="chat-header" id="chat-header">
-          <div>
-            <div class="chat-title" id="chat-title">New Chat</div>
-            <div class="chat-subtitle" id="chat-subtitle"></div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <button class="icon-btn chat-sidebar-toggle" id="chat-sidebar-toggle" aria-label="Toggle sidebar" onclick="toggleChatSidebar()">
+              <span>☰</span>
+            </button>
+            <div>
+              <div class="chat-title" id="chat-title">New Chat</div>
+              <div class="chat-subtitle" id="chat-subtitle"></div>
+            </div>
           </div>
           <div style="display:flex;gap:4px;align-items:center;">
             <span class="badge" id="chat-model-badge" style="font-size:10px;">auto</span>
@@ -281,6 +319,9 @@ async function loadChat(container) {
     </div>
   `;
 
+  // Load models into selector
+  loadChatModels();
+
   // Set default profile
   const profileSelect = document.getElementById('chat-profile');
   if (profileSelect) profileSelect.value = defaultProfile;
@@ -304,7 +345,7 @@ async function loadChat(container) {
   document.getElementById('chat-session-search')?.addEventListener('input', (e) => {
     const q = e.target.value.toLowerCase();
     document.querySelectorAll('#chat-sidebar-list .chat-session-item').forEach(el => {
-      el.style.display = el.dataset.title?.toLowerCase().includes(q) || el.dataset.sid?.toLowerCase().includes(q) ? '' : 'none';
+      el.style.display = el.dataset?.title?.toLowerCase().includes(q) || el.dataset?.sid?.toLowerCase().includes(q) ? '' : 'none';
     });
   });
 
@@ -315,6 +356,13 @@ async function loadChat(container) {
       textarea.style.height = 'auto';
       textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
     });
+  }
+
+  // Mobile: auto-close sidebar
+  if (window.innerWidth <= 768) {
+    const sidebar = document.getElementById('chat-sidebar');
+    if (sidebar) sidebar.classList.add('collapsed');
+    state.chatSidebarOpen = false;
   }
 
   // Welcome message
@@ -507,13 +555,28 @@ function renderChatMessage(msg) {
   return div;
 }
 
+function generateChatSessionId() {
+  const now = new Date();
+  const ts = now.toISOString().replace(/[-:T]/g, '_').slice(0, 15);
+  const rand = Math.random().toString(36).slice(2, 6);
+  return `${ts}_${rand}`;
+}
+
 function newChatSession() {
-  state._currentChatSession = 0;
-  document.getElementById('chat-title').textContent = 'New Chat';
-  document.getElementById('chat-subtitle').textContent = '';
-  document.getElementById('chat-status-session').textContent = '—';
-  document.getElementById('chat-status-tokens').textContent = '';
-  document.getElementById('chat-messages').innerHTML = `
+  const newSessionId = generateChatSessionId();
+  state._currentChatSession = newSessionId;
+
+  // Reset UI
+  const titleEl = document.getElementById('chat-title');
+  if (titleEl) titleEl.textContent = 'New Chat';
+  const subtitleEl = document.getElementById('chat-subtitle');
+  if (subtitleEl) subtitleEl.textContent = '';
+  const statusSessionEl = document.getElementById('chat-status-session');
+  if (statusSessionEl) statusSessionEl.textContent = newSessionId.slice(0, 20) + '...';
+  const statusTokensEl = document.getElementById('chat-status-tokens');
+  if (statusTokensEl) statusTokensEl.textContent = '';
+  const messagesEl = document.getElementById('chat-messages');
+  if (messagesEl) messagesEl.innerHTML = `
     <div style="text-align:center;color:var(--fg-subtle);padding:80px 20px;">
       <div style="font-size:32px;margin-bottom:16px;">💬</div>
       <div style="font-size:16px;margin-bottom:8px;color:var(--fg);">New conversation</div>
@@ -521,6 +584,67 @@ function newChatSession() {
     </div>
   `;
   document.querySelectorAll('.chat-session-item').forEach(el => el.classList.remove('active'));
+
+  return newSessionId;
+}
+
+function toggleChatSidebar() {
+  state.chatSidebarOpen = !state.chatSidebarOpen;
+  localStorage.setItem('hci-chat-sidebar', state.chatSidebarOpen);
+
+  const sidebar = document.getElementById('chat-sidebar');
+  if (sidebar) {
+    sidebar.classList.toggle('collapsed', !state.chatSidebarOpen);
+  }
+  const backdrop = document.getElementById('chat-sidebar-backdrop');
+  if (backdrop && window.innerWidth <= 768) {
+    backdrop.style.display = state.chatSidebarOpen ? 'block' : 'none';
+  }
+}
+
+async function loadChatModels() {
+  const select = document.getElementById('chat-model');
+  if (!select) return;
+
+  try {
+    const res = await api('/api/models');
+    if (!res.ok) return;
+
+    // Clear existing
+    select.innerHTML = '<option value="">auto (default)</option>';
+
+    // Add models from groups
+    if (res.groups) {
+      res.groups.forEach(group => {
+        const optgroup = document.createElement('optgroup');
+        optgroup.label = group.provider;
+        group.models?.forEach(model => {
+          const opt = document.createElement('option');
+          opt.value = model;
+          opt.textContent = model;
+          if (model === res.default) opt.selected = true;
+          optgroup.appendChild(opt);
+        });
+        if (optgroup.children.length > 0) select.appendChild(optgroup);
+      });
+    }
+
+    // Flat fallback
+    if (!res.groups || res.groups.length === 0) {
+      if (res.models) {
+        res.models.forEach(m => {
+          if (m.value && m.value !== 'unknown') {
+            const opt = document.createElement('option');
+            opt.value = m.value;
+            opt.textContent = `${m.label}: ${m.value}`;
+            select.appendChild(opt);
+          }
+        });
+      }
+    }
+  } catch (e) {
+    console.error('Failed to load models:', e);
+  }
 }
 
 async function renameChatSession(sessionId = 0) {
@@ -4285,6 +4409,8 @@ window.sendChatMessage = sendChatMessage;
 window.loadChatSession = loadChatSession;
 window.refreshChatSidebar = refreshChatSidebar;
 window.newChatSession = newChatSession;
+window.toggleChatSidebar = toggleChatSidebar;
+window.loadChatModels = loadChatModels;
 window.renameChatSession = renameChatSession;
 window.deleteChatSession = deleteChatSession;
 window.loadLogs = loadLogs;
