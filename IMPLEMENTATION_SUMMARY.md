@@ -1,126 +1,79 @@
-# Frontend Features Implementation Summary
+# Phase 1 Implementation Summary
 
 ## Overview
-Successfully re-implemented all missing frontend features in `/root/projects/hci-staging/src/js/main.js` based on the reference dist build.
+Successfully implemented all missing HCI frontend features for Agent Detail Sub-pages (Phase 1) as requested.
 
-## Files Modified
-1. `/root/projects/hci-staging/src/js/main.js` - Main JavaScript file
-2. `/root/projects/hci-staging/src/css/components.css` - Added blink animation (already existed)
+## Changes Made
 
-## Features Implemented
+### 1. Config Tab Enhancements (`loadAgentConfig`)
+- **Category Tabs**: Added all 6 categories (Model & Provider, Agent Behavior, Terminal, Display & Streaming, Context & Compression, MCP Servers)
+- **Editable Form Fields**: 
+  - Toggle switches for boolean values
+  - Input fields for strings and numbers
+  - Edit mode with Save/Revert buttons
+- **Secrets Tab**: New tab for .env secrets with:
+  - Masked values display
+  - Reveal button (👁) to show actual values
+  - Edit/Delete buttons in edit mode
+- **Raw YAML Tab**: Displays raw configuration from server
+- **Edit Mode**: Full toggle between View/Edit modes with proper state management
 
-### 1. Chat Page (Step 1) ✅
-**Nav Changes:**
-- Added "Chat" link between Skills and Logs in navigation
+### 2. Sessions Tab Enhancements (`loadAgentSessions`)
+- **Stats Cards**: Session statistics including total sessions, messages, DB size, and platform breakdown (CLI, Telegram, WhatsApp)
+- **Search Input**: Real-time search filtering across session ID, title, and source
+- **Session Table**: Complete table with all required columns:
+  - Session ID (with monospace font)
+  - Title
+  - Source (with badge styling)
+  - Message count
+  - Last updated timestamp
+  - Action buttons (Resume, Rename, Export, Delete)
+- **Pagination**: Shows 100 sessions max with count display
+- **Dynamic Loading**: Separate `loadSessionStats` function for stats, `loadCronJobs` for session data
 
-**HTML Changes:**
-- Added `<div id="page-chat" class="page"></div>`
+### 3. Memory Tab (`loadAgentMemory`)
+- **Memory Stats**: 
+  - MEMORY.md character count with progress bar
+  - USER.md character count  
+  - SOUL.md character count
+  - Memory provider status (honcho vs built-in vs external)
+- **File Contents Viewer**: Expandable sections for each memory file with:
+  - MEMORY.md content
+  - USER.md content
+  - SOUL.md content
+  - Provider-specific details (Honcho connection status, workspace, AI peer info, etc.)
+- **Context Compression**: Shows compression settings (enabled/disabled, threshold, summary model)
 
-**Functions Implemented:**
-- `loadChat(container)` - Main chat page loader with sidebar, message area, input, and model selector
-- `loadChatSidebar()` - Loads chat sessions from GET /api/all-sessions?profile=X
-- `loadChatSession(sessionId)` - Loads messages from GET /api/sessions/:id/messages?profile=X
-- `Fu(p, t)` - Renders chat messages with role colors and strips hermes banner
-- `newChatSession()` - Resets to a new chat
-- `renameChatSession(sessionId)` - Shows modal + POST /api/sessions/:id/rename
-- `deleteChatSession(sessionId)` - Shows modal + DELETE /api/sessions/:id
-- `sendChatMessage()` - SSE streaming via POST /api/chat/send
+### 4. Additional Features
+- **Window Exports**: All new functions properly exported for use in HTML templates:
+  - `window.enableEdit` - Enable edit mode for any tab type
+  - `window.cancelEdit` - Cancel edit and revert to view mode
+  - `window.revealSecret` - Reveal secret value via API
+  - `window.editSecret` - Enable inline editing of secrets
+  - `window.deleteSecret` - Delete a secret with confirmation
+  - `window.saveSecrets` - Save all edited secrets at once
+  - `window.saveConfig` - Save configuration changes for a category
 
-**Window Exports:**
-- `loadChat`, `loadChatSidebar`, `loadChatSession`, `newChatSession`, `renameChatSession`, `deleteChatSession`, `sendChatMessage`
+## API Endpoints Used
+All endpoints already existed in backend (`server.js`):
+- `GET /api/config/:profile` - Load configuration
+- `PUT /api/config/:profile` - Save configuration
+- `GET /api/keys/:profile` - List secrets
+- `GET /api/keys/:profile/reveal/:name` - Reveal secret value
+- `PUT /api/keys/:profile` - Update secret
+- `DELETE /api/keys/:profile/:name` - Delete secret
+- `GET /api/sessions` - List all sessions
+- `GET /api/sessions/stats` - Get session statistics
+- `GET /api/sessions/:id/messages` - Get session messages
+- `POST /api/sessions/:id/rename` - Rename session
+- `GET /api/memory/:name` - Get memory data
+- `GET /api/agent/status` - Get agent status
 
-**CSS:**
-- Blink animation `@keyframes blink` already existed in components.css
-
-### 2. Logs Page (Step 2) ✅
-**Nav Changes:**
-- "Logs" link already in navigation
-
-**HTML Changes:**
-- Added `<div id="page-logs" class="page"></div>`
-
-**Functions Implemented:**
-- `loadLogs(container)` - Main logs page with filters, search, and auto-refresh
-- `refreshLogs()` - Calls GET /api/logs?profile=X&source=X&level=X&search=X&lines=300
-- `toggleLogsAutoRefresh()` - 5s interval toggle
-- `debounceLogsSearch()` - 400ms debounced search
-
-**Window Exports:**
-- `refreshLogs`, `toggleLogsAutoRefresh`, `debounceLogsSearch`
-
-### 3. RBAC Permission System (Step 3) ✅
-**Functions Implemented:**
-- `hasPerm(perm)` - Checks state.user.role === 'admin' || state.user.permissions[perm]
-
-**UI Elements Protected:**
-- Terminal button: `hasPerm('terminal')`
-- Gateway start/stop/restart: `hasPerm('gateway.control')`
-- Config edit toggle: `hasPerm('config.edit')`
-- Secrets reveal/edit/delete: `hasPerm('secrets.reveal')`, `hasPerm('secrets.edit')`
-- Skills install/update/uninstall: `hasPerm('skills.install')`
-- Cron manage: `hasPerm('cron.manage')`
-- HCI update/restart: `hasPerm('hci.update')`
-- Doctor/Dump: `hasPerm('doctor')`
-- Backup: `hasPerm('backup')`
-- User management: `hasPerm('users.manage')`
-
-### 4. User Management (Step 4) ✅
-**Functions Implemented:**
-- `showCreateUser()` - Full modal with password visibility toggle, confirm password, preset buttons (Admin/Viewer/Custom), permission checklist
-- `showEditUser(username)` - Same modal pre-filled with current permissions
-- `buildPermChecklistHTML(selectedPerms)` - Grouped permission checkboxes
-- `applyPreset(preset)` - Auto-fill checklist
-- `togglePwVis(btn)` - Password visibility toggle
-
-**Window Exports:**
-- `showCreateUser`, `showEditUser`, `togglePwVis`, `applyPreset`
-**Permissions:**
-- Create/edit/delete buttons gated with `hasPerm('users.manage')`
-
-### 5. Notification Improvements (Step 5) ✅
-**Functions Implemented:**
-- `renderNotifications()` - Max 5 notifications shown with "Load more"
-- `dismissNotif(el, id)` - Dismiss single notification and mark as read
-- `loadMoreNotifs()` - Load more notifications
-
-**Window Exports:**
-- `dismissNotif`, `loadMoreNotifs`
-
-### 6. Other Fixes (Step 6) ✅
-**Modal Styling:**
-- Background: `var(--bg-base)` instead of `var(--bg)`
-- Modal-message color: `var(--fg)`
-
-**Light Mode:**
-- `--fg-muted` 72%
-- `--fg-subtle` 50%
-- Borders stronger
-
-**Gateway Tab:**
-- Removed log viewer (logs only in dedicated Logs page)
-
-**Memory Tab:**
-- div blocks instead of details elements for scrollable content
-
-**Skills Search:**
-- Preview/Install buttons with debounce
-
-**Check Updates:**
-- Themed modal + parsed notification
-
-## Build Status
-✅ Build successful: `dist/assets/index-BUs8NDWs.js` (96.65 KB)
-
-## Testing
-🔄 HCI service restarted successfully
-📊 All features implemented and exported
-🔧 No syntax errors in build
-
-## Files Changed
-1. `src/js/main.js` - Added all missing functions and window exports
-2. `src/css/components.css` - Blink animation already existed
+## File Modified
+- `/root/projects/hci-staging/src/js/main.js` - Complete rewrite of config/tab logic, enhanced sessions and memory tabs, added new utility functions
 
 ## Verification
-- Build: ✅ Success
-- Export check: ✅ All functions exported
-- Gateway restart: ✅ Successful
+- Syntax check passed: `node -c src/js/main.js` ✓
+- Build successful: `npm run build` completed without errors ✓
+- No console errors detected
+- All functions properly exported and accessible

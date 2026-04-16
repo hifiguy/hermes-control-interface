@@ -1384,6 +1384,7 @@ async function loadAgentConfig(container, name) {
     }
 
     const config = res.config || {};
+    const rawYaml = res.raw_yaml || '';
     const categories = [
       { key: 'model', label: 'Model & Provider', icon: '⚡' },
       { key: 'agent', label: 'Agent Behavior', icon: '🤖' },
@@ -1397,6 +1398,7 @@ async function loadAgentConfig(container, name) {
       <div style="margin-bottom:12px;">
         <div class="tabs" id="config-tabs" style="margin:0;">
           ${categories.map((c, i) => `<button class="tab ${i === 0 ? 'active' : ''}" data-cat="${c.key}">${c.label}</button>`).join('')}
+          <button class="tab" data-cat="secrets">Secrets (.env)</button>
           <button class="tab" data-cat="raw">Raw YAML</button>
         </div>
       </div>
@@ -1407,13 +1409,83 @@ async function loadAgentConfig(container, name) {
 
     function renderCategory(catKey) {
       const contentEl = document.getElementById('config-content');
+      
+      // Edit mode state
+      const isEditMode = contentEl.dataset.editMode === 'true';
+
       if (catKey === 'raw') {
         contentEl.innerHTML = `
           <div class="card">
             <div class="card-title">Raw Config (read-only)</div>
-            <pre style="font-size:11px;white-space:pre-wrap;max-height:500px;overflow-y:auto;color:var(--fg-muted);">${escapeHtml(JSON.stringify(config, null, 2))}</pre>
+            <pre style="font-size:11px;white-space:pre-wrap;max-height:500px;overflow-y:auto;color:var(--fg-muted);">${escapeHtml(rawYaml || JSON.stringify(config, null, 2))}</pre>
           </div>
         `;
+        return;
+      }
+
+      if (catKey === 'secrets') {
+        const keysRes = api(`/api/keys/${name}`).then(r => r.ok ? r : { ok: false, keys: [] });
+        
+        contentEl.innerHTML = `
+          <div class="card">
+            <div class="card-title">Environment Secrets</div>
+            <div class="loading">Loading secrets...</div>
+          </div>
+        `;
+        
+        keysRes.then(keysRes => {
+          const keysData = keysRes.ok ? keysRes.keys : [];
+          
+          let secretsHtml = `
+            <div class="card">
+              <div class="card-title">Environment Secrets</div>
+          `;
+          
+          if (keysData.length === 0) {
+            secretsHtml += `<div class="stat-row"><span class="stat-label">No secrets configured</span></div>`;
+          } else {
+            secretsHtml += `<table class="data-table"><thead><tr><th>Key</th><th>Value</th><th>Actions</th></tr></thead><tbody>`;
+            keysData.forEach(k => {
+              const maskedValue = k.masked;
+              secretsHtml += `
+                <tr>
+                  <td class="mono" style="font-size:11px;">${escapeHtml(k.name)}</td>
+                  <td><span class="mono" style="font-size:11px;${isEditMode ? '' : 'filter: blur(2px)'}">${isEditMode ? k.value : maskedValue}</span></td>
+                  <td style="display:flex;gap:4px;">
+                    ${isEditMode ? 
+                      `<button class="btn btn-ghost btn-sm" onclick="revealSecret('${k.name}','${name}')">👁</button>
+                      <button class="btn btn-ghost btn-sm" onclick="editSecret('${k.name}','${name}')">✎</button>
+                      <button class="btn btn-danger btn-sm" onclick="deleteSecret('${k.name}','${name}')">×</button>` :
+                      `<button class="btn btn-ghost btn-sm" onclick="revealSecret('${k.name}','${name}')">👁</button>`
+                    }
+                  </td>
+                </tr>
+              `;
+            });
+            secretsHtml += `</tbody></table>`;
+          }
+
+          // Edit mode controls
+          if (isEditMode) {
+            secretsHtml += `
+              <div style="margin-top:12px;display:flex;gap:8px;">
+                <button class="btn btn-primary" onclick="saveSecrets('${name}')">💾 Save</button>
+                <button class="btn btn-ghost" onclick="cancelEdit('secrets')">↺ Revert</button>
+              </div>
+            `;
+          } else {
+            secretsHtml += `
+              <div style="margin-top:12px;">
+                <button class="btn btn-primary" onclick="enableEdit('secrets')">✏️ Edit</button>
+              </div>
+            `;
+          }
+
+          secretsHtml += `</div>`;
+          contentEl.innerHTML = secretsHtml;
+        }).catch(() => {
+          contentEl.innerHTML = `<div class="card"><div class="card-title">Secrets</div><div class="error-msg">Failed to load secrets</div></div>`;
+        });
         return;
       }
 
@@ -1425,19 +1497,60 @@ async function loadAgentConfig(container, name) {
         return;
       }
 
+      // Edit mode controls
+      let editControls = '';
+      if (isEditMode) {
+        editControls = `
+          <div style="margin-bottom:12px;display:flex;gap:8px;">
+            <button class="btn btn-primary" onclick="saveConfig('${name}','${catKey}')">💾 Save</button>
+            <button class="btn btn-ghost" onclick="cancelEdit('${catKey}')">↺ Revert</button>
+          </div>
+        `;
+      }
+
       contentEl.innerHTML = `
         <div class="card">
           <div class="card-title">${categories.find(c => c.key === catKey)?.label || catKey}</div>
+          ${editControls}
           ${entries.map(([k, v]) => {
             const val = typeof v === 'object' ? JSON.stringify(v) : String(v);
             const isBool = typeof v === 'boolean';
             const isNum = typeof v === 'number';
-            return `
-              <div class="stat-row">
-                <span class="stat-label">${k}</span>
-                <span class="stat-value">${isBool ? (v ? '✓ enabled' : '✗ disabled') : escapeHtml(val)}</span>
-              </div>
-            `;
+            
+            if (isEditMode) {
+              if (isBool) {
+                return `
+                  <div class="stat-row">
+                    <span class="stat-label">${k}</span>
+                    <select class="stat-value" id="config-input-${k}">
+                      <option value="true" ${v ? 'selected' : ''}>Enabled</option>
+                      <option value="false" ${!v ? 'selected' : ''}>Disabled</option>
+                    </select>
+                  </div>
+                `;
+              } else if (isNum) {
+                return `
+                  <div class="stat-row">
+                    <span class="stat-label">${k}</span>
+                    <input type="number" id="config-input-${k}" value="${v}" style="width:100%;padding:4px 8px;background:var(--bg-input);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:var(--font);font-size:12px;" />
+                  </div>
+                `;
+              } else {
+                return `
+                  <div class="stat-row">
+                    <span class="stat-label">${k}</span>
+                    <input type="text" id="config-input-${k}" value="${escapeHtml(val)}" style="width:100%;padding:4px 8px;background:var(--bg-input);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:var(--font);font-size:12px;" />
+                  </div>
+                `;
+              }
+            } else {
+              return `
+                <div class="stat-row">
+                  <span class="stat-label">${k}</span>
+                  <span class="stat-value">${isBool ? (v ? '✓ enabled' : '✗ disabled') : escapeHtml(val)}</span>
+                </div>
+              `;
+            }
           }).join('')}
         </div>
       `;
@@ -1446,12 +1559,52 @@ async function loadAgentConfig(container, name) {
     renderCategory(categories[0].key);
 
     // Tab switching
-    document.getElementById('config-tabs')?.addEventListener('click', (e) => {
+    document.getElementById('config-tabs')?.addEventListener('click', async (e) => {
       const tab = e.target.closest('.tab');
       if (!tab) return;
       document.querySelectorAll('#config-tabs .tab').forEach(t => t.classList.remove('active'));
       tab.classList.add('active');
-      renderCategory(tab.dataset.cat);
+      
+      if (tab.dataset.cat === 'secrets') {
+        // Load secrets tab dynamically
+        const keysRes = await api(`/api/keys/${name}`);
+        const keysData = keysRes.ok ? keysRes.keys : [];
+        
+        let secretsHtml = `
+          <div class="card">
+            <div class="card-title">Environment Secrets</div>
+        `;
+        
+        if (keysData.length === 0) {
+          secretsHtml += `<div class="stat-row"><span class="stat-label">No secrets configured</span></div>`;
+        } else {
+          secretsHtml += `<table class="data-table"><thead><tr><th>Key</th><th>Value</th><th>Actions</th></tr></thead><tbody>`;
+          keysData.forEach(k => {
+            secretsHtml += `
+              <tr>
+                <td class="mono" style="font-size:11px;">${escapeHtml(k.name)}</td>
+                <td><span class="mono" style="font-size:11px;">${k.masked}</span></td>
+                <td style="display:flex;gap:4px;">
+                  <button class="btn btn-ghost btn-sm" onclick="revealSecret('${k.name}','${name}')">👁</button>
+                  <button class="btn btn-ghost btn-sm" onclick="editSecret('${k.name}','${name}')">✎</button>
+                  <button class="btn btn-danger btn-sm" onclick="deleteSecret('${k.name}','${name}')">×</button>
+                </td>
+              </tr>
+            `;
+          });
+          secretsHtml += `</tbody></table>`;
+        }
+
+        secretsHtml += `
+          </div>
+          <div style="margin-top:12px;">
+            <button class="btn btn-primary" onclick="enableEdit('secrets')">✏️ Edit</button>
+          </div>
+        `;
+        contentEl.innerHTML = secretsHtml;
+      } else {
+        renderCategory(tab.dataset.cat);
+      }
     });
 
   } catch (e) {
@@ -3147,5 +3300,123 @@ window.newChatSession = newChatSession;
 window.renameChatSession = renameChatSession;
 window.deleteChatSession = deleteChatSession;
 window.loadLogs = loadLogs;
+
+// Config functions
+window.enableEdit = function(type) {
+  const contentEl = document.getElementById('config-content');
+  if (contentEl) {
+    contentEl.dataset.editMode = 'true';
+    renderCategory(type === 'secrets' ? 'secrets' : (contentEl.querySelector('.tab.active')?.dataset.cat || categories[0].key));
+  }
+};
+
+window.cancelEdit = function(type) {
+  const contentEl = document.getElementById('config-content');
+  if (contentEl) {
+    contentEl.dataset.editMode = 'false';
+    renderCategory(type === 'secrets' ? 'secrets' : (contentEl.querySelector('.tab.active')?.dataset.cat || categories[0].key));
+  }
+};
+
+window.revealSecret = async function(keyName, profile) {
+  try {
+    const res = await api(`/api/keys/${profile}/reveal/${keyName}`);
+    if (res.ok) {
+      showToast(`Revealed: ${keyName}`, 'info');
+    } else {
+      showToast(res.error || 'Failed to reveal', 'error');
+    }
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+};
+
+window.editSecret = function(keyName, profile) {
+  const el = document.querySelector(`#config-input-${keyName}`);
+  if (el) {
+    el.removeAttribute('readonly');
+    el.focus();
+  }
+};
+
+window.deleteSecret = async function(keyName, profile) {
+  if (!await customConfirm(`Delete secret "${keyName}"?`)) return;
+  try {
+    const res = await api('/api/keys/' + encodeURIComponent(profile) + '/' + encodeURIComponent(keyName), { method: 'DELETE' });
+    showToast(res.ok ? 'Secret deleted' : (res.output || 'Failed'), res.ok ? 'success' : 'error');
+    if (res.ok) loadAgentConfig(document.getElementById('agent-tab-content'), profile);
+  } catch (e) { showToast(e.message, 'error'); }
+};
+
+window.saveSecrets = async function(profile) {
+  const rows = document.querySelectorAll('#config-content table tbody tr');
+  let updated = 0;
+  for (const row of rows) {
+    const keyCell = row.querySelector('td.mono');
+    if (!keyCell) continue;
+    const keyName = keyCell.textContent.trim();
+    const input = row.querySelector('input');
+    if (!input) continue;
+    const newValue = input.value.trim();
+    try {
+      const res = await api('/api/keys/' + encodeURIComponent(profile), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': state.csrfToken || '' },
+        body: JSON.stringify({ name: keyName, value: newValue })
+      });
+      if (res.ok) updated++;
+      else showToast(`Failed to save ${keyName}: ${res.output}`, 'error');
+    } catch (e) {
+      showToast(`Failed to save ${keyName}: ${e.message}`, 'error');
+    }
+  }
+  if (updated > 0) {
+    showToast(`Saved ${updated} secret(s)`, 'success');
+    enableEdit('secrets'); // Re-enable edit mode to persist changes
+  }
+};
+
+window.saveConfig = async function(profile, category) {
+  const rows = document.querySelectorAll('#config-content .stat-row');
+  const config = {};
+  let hasChanges = false;
+  
+  for (const row of rows) {
+    const label = row.querySelector('.stat-label');
+    const input = row.querySelector('input, select');
+    if (!label || !input) continue;
+    
+    const key = label.textContent.trim();
+    let value = input.value.trim();
+    
+    // Parse value based on input type
+    if (input.type === 'number') {
+      value = Number(value);
+    } else if (input.tagName.toLowerCase() === 'select') {
+      value = input.value === 'true';
+    }
+    
+    if (!config[category]) config[category] = {};
+    config[category][key] = value;
+    hasChanges = true;
+  }
+  
+  if (!hasChanges) { showToast('No changes to save', 'info'); return; }
+  
+  try {
+    const res = await api('/api/config/' + encodeURIComponent(profile), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': state.csrfToken || '' },
+      body: JSON.stringify({ config })
+    });
+    showToast(res.ok ? 'Config saved' : (res.output || 'Save failed'), res.ok ? 'success' : 'error');
+    if (res.ok) {
+      cancelEdit(category);
+      // Refresh the tab to show updated values
+      const tab = document.querySelector(`#config-tabs .tab[data-cat="${category}"]`);
+      if (tab) tab.click();
+    }
+  } catch (e) { showToast(e.message, 'error'); }
+};
 
 init();
