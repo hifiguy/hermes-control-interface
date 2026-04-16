@@ -496,8 +496,14 @@ function requireAuth(req, res, next) {
 
 function requireCsrf(req, res, next) {
   if (!isAuthed(req)) return res.status(401).json({ error: 'authentication required' });
-  if (verifyCsrfToken(req)) return next();
-  return res.status(403).json({ error: 'invalid CSRF token' });
+  const headerToken = req.headers['x-csrf-token'];
+  if (!headerToken) { console.error('[CSRF-DEBUG] PUT cron/edit missing header token'); return res.status(403).json({ error: 'invalid CSRF token' }); }
+  const cookies = parseCookies(req);
+  const authToken = cookies[AUTH_COOKIE];
+  if (!authToken) { console.error('[CSRF-DEBUG] PUT cron/edit missing auth cookie'); return res.status(403).json({ error: 'invalid CSRF token' }); }
+  const expected = deriveCsrfToken(authToken);
+  if (!safeTimingEqual(headerToken, expected)) { console.error('[CSRF-DEBUG] PUT cron/edit token mismatch, got:', headerToken.substring(0,20), 'expected:', expected.substring(0,20)); return res.status(403).json({ error: 'invalid CSRF token' }); }
+  return next();
 }
 
 // (setAuthCookie and clearAuthCookie defined above at L37/L40)
@@ -1730,8 +1736,10 @@ function parseHermesProfileList(raw) {
   const dataLines = lines.slice(2);
   const profiles = [];
   for (const line of dataLines) {
+    // Skip blank and separator lines (box-drawing dashes, not \s)
+    if (/^[\s─▪▫·∙¤]+$/.test(line)) continue;
     const active = line.includes('◆');
-    const cleaned = line.replace(/[◆\s]+$/, '').replace(/\s*◆\s*/, '').trim();
+    const cleaned = line.replace(/[◆]+$/, '').replace(/\s*◆\s*/, '').trimEnd();
     const parts = cleaned.split(/\s{2,}/).map((p) => p.trim()).filter(Boolean);
     if (parts.length < 3) continue;
     profiles.push({
