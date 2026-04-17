@@ -135,6 +135,11 @@ function clearAuthCookie(res) {
 }
 const CONTROL_HOME = process.env.HERMES_CONTROL_HOME || path.join(os.homedir(), '.hermes');
 const CONTROL_STATE_DIR = path.join(CONTROL_HOME, 'control-interface');
+
+// Profile-aware home directory helper
+function profileHome(profile) {
+  return profile === 'default' ? CONTROL_HOME : path.join(CONTROL_HOME, 'profiles', profile);
+}
 const AVATAR_OVERRIDE_PATH = path.join(CONTROL_STATE_DIR, 'avatar.dataurl');
 
 function parseExplorerRoots(raw) {
@@ -212,7 +217,7 @@ app.use('/vendor/xterm-addon-fit', express.static(path.join(__dirname, 'node_mod
 // ── Plugin System ──
 // Scan ~/.hermes/skills/*/ui/manifest.json for plugin registrations
 function findPluginManifests() {
-  const skillsDir = path.join(os.homedir(), '.hermes', 'skills');
+  const skillsDir = path.join(CONTROL_HOME, 'skills');
   const manifests = [];
   if (!fs.existsSync(skillsDir)) return manifests;
   try {
@@ -299,7 +304,7 @@ app.post('/api/chat/send', requireAuth, requirePerm('chat.use'), async (req, res
   try {
     const proc = spawn('bash', ['-lc', fullCmd], {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, HERMES_HOME: path.join(os.homedir(), '.hermes') },
+      env: { ...process.env, HERMES_HOME: CONTROL_HOME },
     });
 
     proc.stdout.on('data', (chunk) => {
@@ -342,7 +347,7 @@ app.post('/api/chat/send', requireAuth, requirePerm('chat.use'), async (req, res
 // ── Model Info — read from config.yaml ──
 app.get('/api/models', requireAuth, async (req, res) => {
   try {
-    const configPath = path.join(os.homedir(), '.hermes', 'config.yaml');
+    const configPath = path.join(CONTROL_HOME, 'config.yaml');
     const configContent = await fs.promises.readFile(configPath, 'utf-8');
     const config = yaml.load(configContent) || {};
     
@@ -759,8 +764,8 @@ function safeStat(filePath) {
 }
 
 function readFileSafe(filePath, maxBytes = 120_000) {
-  const rel = String(filePath || '').replace(/^\/+/, '');
-  const abs = path.resolve(CONTROL_HOME, rel);
+  const raw = String(filePath || '');
+  const abs = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(CONTROL_HOME, raw);
   if (!isAllowedPath(abs)) throw new Error('path outside allowed roots');
   const stat = safeStat(abs);
   if (!stat) throw new Error('file not found');
@@ -770,8 +775,8 @@ function readFileSafe(filePath, maxBytes = 120_000) {
 }
 
 function writeFileSafe(filePath, content) {
-  const rel = String(filePath || '').replace(/^\/+/, '');
-  const abs = path.resolve(CONTROL_HOME, rel);
+  const raw = String(filePath || '');
+  const abs = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(CONTROL_HOME, raw);
   if (!isAllowedPath(abs)) throw new Error('path outside allowed roots');
   const stat = safeStat(abs);
   if (!stat) throw new Error('file not found');
@@ -1048,7 +1053,7 @@ async function getAllSessions(profile) {
     // Enrich with message counts from state.db
     try {
       const stateDbPath = profile && profile !== 'default'
-        ? path.join(os.homedir(), '.hermes', 'profiles', profile, 'state.db')
+        ? path.join(profileHome(profile), 'state.db')
         : STATE_DB_PATH;
       if (fs.existsSync(stateDbPath)) {
         const db = new Database(stateDbPath, { readonly: true });
@@ -1979,8 +1984,8 @@ app.get('/api/logs', requireAuth, requirePerm('logs.view'), async (req, res) => 
     const search = String(req.query.search || '').toLowerCase();
 
     const profiles = profile === 'all'
-      ? ['default', ...fs.readdirSync(path.join(os.homedir(), '.hermes', 'profiles')).filter(d => {
-          try { return fs.statSync(path.join(os.homedir(), '.hermes', 'profiles', d)).isDirectory(); } catch { return false; }
+      ? ['default', ...fs.readdirSync(path.join(CONTROL_HOME, 'profiles')).filter(d => {
+          try { return fs.statSync(path.join(CONTROL_HOME, 'profiles', d)).isDirectory(); } catch { return false; }
         })]
       : [sanitizeProfileName(profile)].filter(Boolean);
 
@@ -1990,8 +1995,8 @@ app.get('/api/logs', requireAuth, requirePerm('logs.view'), async (req, res) => 
 
     for (const prof of profiles) {
       const logBase = prof === 'default'
-        ? path.join(os.homedir(), '.hermes', 'logs')
-        : path.join(os.homedir(), '.hermes', 'profiles', prof, 'logs');
+        ? path.join(CONTROL_HOME, 'logs')
+        : path.join(profileHome(prof), 'logs');
 
       for (const src of sources) {
         if (src === 'gateway') {
@@ -2086,7 +2091,8 @@ app.get('/api/file', requireAuth, (req, res) => {
   if (!requested) return res.status(400).json({ error: 'path required' });
   try {
     const content = readFileSafe(requested);
-    return res.json({ ok: true, path: path.resolve(CONTROL_HOME, requested.replace(/^\/+/, '')), content });
+    const absPath = path.isAbsolute(requested) ? path.resolve(requested) : path.resolve(CONTROL_HOME, requested);
+    return res.json({ ok: true, path: absPath, content });
   } catch (error) {
     const message = error.message || 'file read failed';
     const status = message.includes('EISDIR') ? 400 : message.includes('not found') ? 404 : 400;
@@ -2109,9 +2115,9 @@ app.post('/api/file', requireCsrf, (req, res) => {
 // File listing API for File Explorer
 app.get('/api/files/list', requireAuth, (req, res) => {
   const dirPath = String(req.query.path || '').replace(/^\/+/, '').replace(/\.\./g, '');
-  const baseDir = path.join(os.homedir(), '.hermes');
-  
-  // Security: ensure we stay within .hermes
+  const baseDir = CONTROL_HOME;
+
+  // Security: ensure we stay within CONTROL_HOME
   const resolved = path.resolve(baseDir, dirPath);
   if (!resolved.startsWith(baseDir)) {
     return res.status(403).json({ error: 'path outside allowed roots' });
@@ -2485,7 +2491,7 @@ app.get('/api/config/:profile', requireAuth, async (req, res) => {
   try {
     const profile = sanitizeProfileName(req.params.profile);
     if (!profile) return res.status(400).json({ ok: false, error: 'invalid profile name' });
-    const home = profile === 'default' ? `${process.env.HOME}/.hermes` : `${process.env.HOME}/.hermes/profiles/${profile}`;
+    const home = profileHome(profile);
     const configPath = `${home}/config.yaml`;
     const raw = await shell(`cat "${configPath}" 2>/dev/null || echo "not_found"`);
     if (raw.trim() === 'not_found') {
@@ -2506,7 +2512,7 @@ app.put('/api/config/:profile', requireAuth, requireRole('admin'), async (req, r
   try {
     const profile = sanitizeProfileName(req.params.profile);
     if (!profile) return res.status(400).json({ ok: false, error: 'invalid profile name' });
-    const home = profile === 'default' ? `${process.env.HOME}/.hermes` : `${process.env.HOME}/.hermes/profiles/${profile}`;
+    const home = profileHome(profile);
     const configPath = `${home}/config.yaml`;
 
     // Validate input is an object
@@ -2595,7 +2601,7 @@ app.get('/api/keys/:profile', requireAuth, async (req, res) => {
   try {
     const profile = sanitizeProfileName(req.params.profile);
     if (!profile) return res.status(400).json({ ok: false, error: 'invalid profile name' });
-    const home = profile === 'default' ? `${process.env.HOME}/.hermes` : `${process.env.HOME}/.hermes/profiles/${profile}`;
+    const home = profileHome(profile);
     const envPath = `${home}/.env`;
     const raw = await shell(`cat "${envPath}" 2>/dev/null || echo ""`);
     if (!raw.trim()) {
@@ -2647,7 +2653,7 @@ app.get('/api/keys/:profile/reveal/:name', requireAuth, requireRole('admin'), as
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(keyName)) {
       return res.status(400).json({ ok: false, error: 'invalid key name' });
     }
-    const home = profile === 'default' ? `${process.env.HOME}/.hermes` : `${process.env.HOME}/.hermes/profiles/${profile}`;
+    const home = profileHome(profile);
     const envPath = `${home}/.env`;
     const raw = await shell(`grep -E "^${keyName}=" "${envPath}" 2>/dev/null || echo ""`);
     if (!raw.trim()) {
@@ -2673,7 +2679,7 @@ app.put('/api/keys/:profile', requireAuth, requireRole('admin'), async (req, res
     if (typeof value !== 'string') {
       return res.status(400).json({ ok: false, error: 'value must be a string' });
     }
-    const home = profile === 'default' ? `${process.env.HOME}/.hermes` : `${process.env.HOME}/.hermes/profiles/${profile}`;
+    const home = profileHome(profile);
     const envPath = `${home}/.env`;
     // Read current .env
     const raw = await shell(`cat "${envPath}" 2>/dev/null || echo ""`);
@@ -2708,7 +2714,7 @@ app.delete('/api/keys/:profile/:name', requireAuth, requireRole('admin'), async 
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(keyName)) {
       return res.status(400).json({ ok: false, error: 'invalid key name' });
     }
-    const home = profile === 'default' ? `${process.env.HOME}/.hermes` : `${process.env.HOME}/.hermes/profiles/${profile}`;
+    const home = profileHome(profile);
     const envPath = `${home}/.env`;
     // Remove the key line using sed
     await shell(`sed -i '/^${keyName}=/d' "${envPath}"`);
@@ -2724,8 +2730,8 @@ app.get('/api/memory/:profile', requireAuth, async (req, res) => {
   try {
     const profile = sanitizeProfileName(req.params.profile);
     if (!profile) return res.status(400).json({ ok: false, error: 'invalid profile name' });
-    const home = profile === 'default' ? `${process.env.HOME}/.hermes` : `${process.env.HOME}/.hermes/profiles/${profile}`;
-    const memoriesDir = profile === 'default' ? `${process.env.HOME}/.hermes/memories` : `${home}/memories`;
+    const home = profileHome(profile);
+    const memoriesDir = path.join(home, 'memories');
     const [memoryContent, userContent, soulContent, honchoConfig] = await Promise.all([
       shell(`cat "${memoriesDir}/MEMORY.md" 2>/dev/null || echo ""`),
       shell(`cat "${memoriesDir}/USER.md" 2>/dev/null || echo ""`),
@@ -3079,7 +3085,7 @@ app.get('/api/sessions/:id/messages', requireAuth, (req, res) => {
     // Resolve profile-aware state.db path
     const profile = sanitizeProfileName(req.query.profile);
     const stateDbPath = profile && profile !== 'default'
-      ? path.join(os.homedir(), '.hermes', 'profiles', profile, 'state.db')
+      ? path.join(profileHome(profile), 'state.db')
       : STATE_DB_PATH;
 
     if (!fs.existsSync(stateDbPath)) {
@@ -3292,7 +3298,7 @@ app.get('/api/usage/daily/:days', requireAuth, requirePerm('usage.view'), async 
     const days = Math.min(parseInt(req.params.days || '7', 10), 90);
     const profile = sanitizeProfileName(req.query.profile);
     const stateDbPath = profile && profile !== 'default'
-      ? path.join(os.homedir(), '.hermes', 'profiles', profile, 'state.db')
+      ? path.join(profileHome(profile), 'state.db')
       : STATE_DB_PATH;
 
     if (!fs.existsSync(stateDbPath)) {
